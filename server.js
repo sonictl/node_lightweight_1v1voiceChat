@@ -81,7 +81,7 @@ function serveFile(res, filePath, contentType) {
 const wss = new WebSocket.Server({ 
     server,
     perMessageDeflate: false,  // 关键：禁用压缩，节省CPU
-    maxPayload: 1024           // 每帧最大1KB（40ms @ 8kbps = 40字节）
+    maxPayload: 20 * 1024      // 20KB（安全边界，容纳音频帧）
 });
 
 // 监控统计
@@ -136,7 +136,7 @@ wss.on('connection', (ws, req) => {
         // 极简解析：4字节Header [type(1) + seq(1) + targetId(2)]
         if (data.length < 4) return;
         
-        const targetId = data.readUInt16BE(2);  // 目标客户端ID
+        const targetId = String(data.readUInt16BE(2));  // 目标客户端ID（转为字符串匹配）
         const audioData = data.slice(4);         // Opus 负载
         
         // 统计

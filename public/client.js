@@ -1,10 +1,10 @@
 // 配置参数
 const CONFIG = {
     sampleRate: 48000,          // 使用浏览器原生采样率（opus-recorder 内部会重采样）
-    frameDuration: 40,          // 40ms 帧长
-    bitrate: 8000,              // 8kbps
-    jitterBufferSize: 5,        // 环形缓冲区大小（帧数）
-    initialBufferMs: 120,       // 初始缓冲 120ms (3帧)
+    frameDuration: 20,          // 20ms 帧长（减小包大小）
+    bitrate: 6000,              // 6kbps（降低比特率）
+    jitterBufferSize: 6,        // 环形缓冲区大小（帧数）
+    initialBufferMs: 100,       // 初始缓冲 100ms (5帧)
     maxBufferMs: 200,           // 最大缓冲 200ms
     plcEnabled: true            // 丢包补偿
 };
@@ -22,6 +22,21 @@ let sequenceNumber = 0;
 let jitterBuffer = null;
 let playbackInterval = null;
 let decoderReady = false;
+
+// 调试统计
+let debugStats = {
+    encoderStarted: false,
+    decoderStarted: false,
+    sentPackets: 0,
+    receivedPackets: 0,
+    playedFrames: 0,
+    lostPackets: 0,
+    lastSentTime: 0,
+    lastRecvTime: 0,
+    encoderCallbacks: 0,
+    decoderCallbacks: 0
+};
+let debugInterval = null;
 
 // Jitter Buffer (环形缓冲区)
 class JitterBuffer {
@@ -80,6 +95,7 @@ class JitterBuffer {
             this.expectedSeq = nextSeq;
             this.lastPopTime = Date.now();
             this.stats.lost++;
+            debugStats.lostPackets++;
             return null; // PLC handled by caller
         }
         
@@ -102,6 +118,35 @@ class JitterBuffer {
         this.expectedSeq = -1;
         this.lastPopTime = Date.now();
     }
+}
+
+// 更新调试信息显示
+function updateDebugInfo() {
+    const panel = document.getElementById('debugPanel');
+    const info = document.getElementById('debugInfo');
+    
+    if (!isCalling) {
+        panel.style.display = 'none';
+        return;
+    }
+    
+    panel.style.display = 'block';
+    
+    const now = Date.now();
+    const timeSinceLastSent = debugStats.lastSentTime ? now - debugStats.lastSentTime : 0;
+    const timeSinceLastRecv = debugStats.lastRecvTime ? now - debugStats.lastRecvTime : 0;
+    
+    const jitterStats = jitterBuffer ? jitterBuffer.stats : { pushed: 0, popped: 0, lost: 0 };
+    const bufferFilled = jitterBuffer ? jitterBuffer.getFilledCount() : 0;
+    const bufferReady = jitterBuffer ? jitterBuffer.ready : false;
+    
+    info.innerHTML = `
+<span style="color: ${debugStats.encoderStarted ? '#4caf50' : '#d16969'}">● 编码器:</span> ${debugStats.encoderStarted ? 'Running' : 'Stopped'} | 回调: ${debugStats.encoderCallbacks} | 发送: ${debugStats.sentPackets} 包 | 最后发送: ${timeSinceLastSent}ms 前
+<span style="color: ${debugStats.decoderStarted ? '#4caf50' : '#d16969'}">● 解码器:</span> ${debugStats.decoderStarted ? 'Running' : 'Stopped'} | 回调: ${debugStats.decoderCallbacks} | 接收: ${debugStats.receivedPackets} 包 | 最后接收: ${timeSinceLastRecv}ms 前
+<span style="color: ${bufferReady ? '#4caf50' : '#ffa500'}">● Jitter Buffer:</span> ${bufferReady ? 'Ready' : 'Buffering'} | 填充: ${bufferFilled}/${CONFIG.jitterBufferSize} | 推入: ${jitterStats.pushed} | 弹出: ${jitterStats.popped} | 丢失: ${jitterStats.lost}
+<span style="color: #0e639c">● 播放:</span> 已播放: ${debugStats.playedFrames} 帧 | PCM队列: ${pcmQueue.length}
+<span style="color: #888">● 序列号:</span> 当前: ${sequenceNumber} | 期望: ${jitterBuffer ? jitterBuffer.expectedSeq : -1}
+    `.trim();
 }
 
 // 初始化 WebSocket
@@ -143,6 +188,10 @@ async function initWebSocket() {
             // 提取 Ogg Opus 负载
             const oggData = buffer.slice(4);
             
+            // 更新统计
+            debugStats.receivedPackets++;
+            debugStats.lastRecvTime = Date.now();
+            
             // 送入 Jitter Buffer
             if (jitterBuffer) {
                 jitterBuffer.push(seq, oggData);
@@ -183,10 +232,8 @@ function handleSignaling(data) {
             if (isCalling) {
                 return;
             }
-            // 自动接受呼叫
-            targetId = data.callerId;
-            document.getElementById('targetInput').value = data.callerId;
-            startCallEngine(data.callerId, true);
+            // 显示来电提示，等待用户点击接受
+            showIncomingCallPrompt(data.callerId);
             break;
             
         case 'call_ringing':
@@ -246,12 +293,8 @@ function initEncoder() {
                     encoderFrameSize: CONFIG.frameDuration,
                     encoderApplication: 2048,  // VoIP mode (OPUS_APPLICATION_VOIP)
                     encoderComplexity: 0,       // 最低复杂度
-                    encoderBitRateMode: 'cbr',  // 固定码率
                     monitorGain: 0,
                     recordingGain: 1,
-                    autoGainControl: false,
-                    echoCancellation: false,
-                    noiseSuppression: false,
                     streamPages: true,          // 实时流模式，每帧回调
                     mediaTrackConstraints: {
                         echoCancellation: true,
@@ -262,7 +305,9 @@ function initEncoder() {
                 });
                 
                 // 监听编码后的 Ogg Opus 数据
-                encoder.ondata = (data) => {
+                encoder.ondataavailable = (data) => {
+                    debugStats.encoderCallbacks++;
+                    
                     if (!isCalling || !targetId || !ws || ws.readyState !== WebSocket.OPEN) return;
                     if (!data || data.length === 0) return;
                     
@@ -276,11 +321,19 @@ function initEncoder() {
                     
                     // 发送
                     ws.send(packet);
+                    debugStats.sentPackets++;
+                    debugStats.lastSentTime = Date.now();
                 };
                 
                 encoder.onstart = () => {
                     console.log('[Encoder] Started');
+                    debugStats.encoderStarted = true;
                     resolve();
+                };
+                
+                encoder.onstop = () => {
+                    console.log('[Encoder] Stopped');
+                    debugStats.encoderStarted = false;
                 };
                 
                 encoder.onerror = (err) => {
@@ -313,6 +366,8 @@ function initDecoder() {
                     return;
                 }
                 
+                debugStats.decoderCallbacks++;
+                
                 if (event.data && event.data.length > 0) {
                     const pcmData = event.data[0]; // 单声道
                     if (pcmData && pcmData.length > 0) {
@@ -337,6 +392,7 @@ function initDecoder() {
             });
             
             decoderReady = true;
+            debugStats.decoderStarted = true;
             console.log('[Decoder] Worker initialized');
             resolve();
         } catch (err) {
@@ -356,12 +412,17 @@ function enqueuePCM(pcmData) {
 
 // 播放循环（使用 setInterval + AudioBufferSourceNode）
 function setupPlayback() {
-    if (playAudioContext) {
-        playAudioContext.close();
+    // 复用已激活的 audioContext，避免重复创建
+    if (!playAudioContext || playAudioContext.state === 'closed') {
+        playAudioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: CONFIG.sampleRate
+        });
     }
-    playAudioContext = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: CONFIG.sampleRate
-    });
+    
+    // 恢复 AudioContext（浏览器要求用户手势后才能播放音频）
+    if (playAudioContext.state === 'suspended') {
+        playAudioContext.resume();
+    }
     
     const frameSize = CONFIG.sampleRate * CONFIG.frameDuration / 1000;
     
@@ -391,6 +452,7 @@ function setupPlayback() {
         if (pcmQueue.length > 0) {
             const pcmData = pcmQueue.shift();
             playPCM(pcmData, frameSize);
+            debugStats.playedFrames++;
         }
     }, CONFIG.frameDuration);
 }
@@ -432,6 +494,20 @@ async function startCallEngine(peerId, isAnswer) {
     isCalling = true;
     targetId = peerId;
     
+    // 重置统计
+    debugStats = {
+        encoderStarted: false,
+        decoderStarted: false,
+        sentPackets: 0,
+        receivedPackets: 0,
+        playedFrames: 0,
+        lostPackets: 0,
+        lastSentTime: 0,
+        lastRecvTime: 0,
+        encoderCallbacks: 0,
+        decoderCallbacks: 0
+    };
+    
     try {
         document.getElementById('status').textContent = '🔄 初始化语音引擎...';
         document.getElementById('status').style.color = '#ffa500';
@@ -450,6 +526,9 @@ async function startCallEngine(peerId, isAnswer) {
         
         // 设置播放
         setupPlayback();
+        
+        // 启动调试信息更新
+        debugInterval = setInterval(updateDebugInfo, 500);
         
         // 如果是被叫方，通知呼叫方已接受
         if (isAnswer) {
@@ -488,6 +567,12 @@ async function startCall() {
         return;
     }
     
+    // 预先创建 AudioContext（激活浏览器音频权限，解决自动播放限制）
+    if (!audioContext || audioContext.state === 'suspended') {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContext.resume();
+    }
+    
     // 先发送呼叫信令
     ws.send(JSON.stringify({
         type: 'call',
@@ -512,6 +597,11 @@ function hangup() {
     
     isCalling = false;
     
+    if (debugInterval) {
+        clearInterval(debugInterval);
+        debugInterval = null;
+    }
+    
     if (playbackInterval) {
         clearInterval(playbackInterval);
         playbackInterval = null;
@@ -527,7 +617,11 @@ function hangup() {
     if (decoderWorker) {
         try {
             decoderWorker.postMessage({ command: 'done' });
-            setTimeout(() => decoderWorker.terminate(), 100);
+            setTimeout(() => {
+                if (decoderWorker) {
+                    decoderWorker.terminate();
+                }
+            }, 100);
         } catch (e) {}
         decoderWorker = null;
         decoderReady = false;
@@ -538,13 +632,21 @@ function hangup() {
         mediaStream = null;
     }
     
-    if (playAudioContext) {
-        playAudioContext.close();
+    if (playAudioContext && playAudioContext.state !== 'closed') {
+        try {
+            playAudioContext.close();
+        } catch (e) {
+            console.warn('[Cleanup] playAudioContext close error:', e);
+        }
         playAudioContext = null;
     }
     
-    if (audioContext) {
-        audioContext.close();
+    if (audioContext && audioContext.state !== 'closed') {
+        try {
+            audioContext.close();
+        } catch (e) {
+            console.warn('[Cleanup] audioContext close error:', e);
+        }
         audioContext = null;
     }
     
@@ -562,8 +664,36 @@ function hangup() {
     document.getElementById('status').style.color = '#d4d4d4';
     document.getElementById('callBtn').disabled = false;
     document.getElementById('hangupBtn').disabled = true;
+    document.getElementById('debugPanel').style.display = 'none';
     
     console.log('[Call] Ended');
+}
+
+// 显示来电提示
+function showIncomingCallPrompt(callerId) {
+    const message = `来电：${callerId}\n\n点击"确定"接听，点击"取消"拒绝`;
+    if (confirm(message)) {
+        // 用户点击接受，立即创建并激活 AudioContext（必须在用户交互回调中）
+        if (!audioContext || audioContext.state === 'closed') {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.state === 'suspended') {
+            audioContext.resume().then(() => {
+                console.log('[AudioContext] Resumed after user interaction');
+            });
+        }
+        
+        targetId = callerId;
+        document.getElementById('targetInput').value = callerId;
+        startCallEngine(callerId, true);
+    } else {
+        // 用户拒绝来电
+        ws.send(JSON.stringify({
+            type: 'call_reject',
+            rejecterId: clientId,
+            callerId: callerId
+        }));
+    }
 }
 
 // 页面初始化

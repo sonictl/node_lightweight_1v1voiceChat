@@ -136,10 +136,16 @@
         </div>
         <div class="info" style="margin-top: 20px; font-size: 11px;">
             <strong>⚙️ 技术规格:</strong><br>
-            • 采样率: <code>8kHz</code> | 编码: <code>Opus @ 8kbps CBR</code> | 帧长: <code>40ms</code><br>
+            • 采样率: <code>48kHz</code> | 编码: <code>Opus @ 8kbps CBR</code> | 帧长: <code>40ms</code><br>
             • Jitter Buffer: <code>5帧</code> | 丢包补偿: <code>启用</code> | 回声消除: <code>浏览器底层</code><br>
             • 带宽消耗: <code>~3KB/s</code> 双向 | 支持并发: <code>10-15对</code> @ 300kb/s<br>
             • 服务器: <code>Node.js + WebSocket</code> | 零拷贝转发
+        </div>
+        <div id="debugPanel" class="info" style="margin-top: 10px; font-size: 11px; display: none; background: #1a1a1a;">
+            <strong>🔍 实时调试信息:</strong><br>
+            <div id="debugInfo" style="font-family: monospace; line-height: 1.6; color: #888;">
+                等待通话建立...
+            </div>
         </div>
     </div>
     <script type="module" src="client.js"></script>
