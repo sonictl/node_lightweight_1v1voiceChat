@@ -515,14 +515,14 @@ async function startCallEngine(peerId, isAnswer) {
         // 初始化解码器
         await initDecoder();
         
+        // 初始化 Jitter Buffer（在编码器启动之前，这样启动瞬间到达的包不会丢失）
+        jitterBuffer = new JitterBuffer(CONFIG.jitterBufferSize);
+        
         // 初始化编码器（Recorder 内部会自己创建 AudioContext 和获取麦克风）
         await initEncoder();
         
         // 启动编码器（Recorder.start() 内部会调用 getUserMedia）
         await encoder.start();
-        
-        // 初始化 Jitter Buffer
-        jitterBuffer = new JitterBuffer(CONFIG.jitterBufferSize);
         
         // 设置播放
         setupPlayback();

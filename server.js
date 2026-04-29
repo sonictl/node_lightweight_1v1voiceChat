@@ -160,6 +160,9 @@ wss.on('connection', (ws, req) => {
                     // 发送失败，清理连接
                     cleanupClient(targetWs);
                 }
+                // 发送完成（成功或失败都减1），防止 pendingWrites 只增不减导致所有后续包被丢弃
+                const targetInfo = clientInfo.get(targetWs);
+                if (targetInfo) targetInfo.pendingWrites--;
             });
             
             // 更新积压计数
