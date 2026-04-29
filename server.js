@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 // 配置
-const PORT = 3000;
+const PORT = 4001;
 const BUFFER_POOL_SIZE = 4096;      // 每个连接的接收缓冲区大小
 const MAX_CLIENTS = 50;              // 最大客户端数
 const CONNECTION_TIMEOUT = 60000;    // 60秒无活动断开
