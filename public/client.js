@@ -141,14 +141,12 @@ const VOICE_APP = (() => {
 
             case 'peer_joined':
                 addPeer(msg.peerId);
-                updateRoomStatus();
                 updateDebugInfo();
                 break;
 
             case 'peer_left':
                 removePeer(msg.peerId);
                 stats.lastSeqReceived.delete(msg.peerId);
-                updateRoomStatus();
                 updateDebugInfo();
                 break;
 
@@ -203,6 +201,7 @@ const VOICE_APP = (() => {
         roomPeers.set(peerId, { firstSeq: -1, lastPacketTime: 0 });
         addPeerToList(peerId);
         updatePeerInfoSection();
+        updateRoomStatus();
         console.log(`[PEER] ${peerId} joined`);
     }
 
@@ -210,6 +209,7 @@ const VOICE_APP = (() => {
         roomPeers.delete(peerId);
         removePeerFromList(peerId);
         updatePeerInfoSection();
+        updateRoomStatus();
         console.log(`[PEER] ${peerId} left`);
     }
 
