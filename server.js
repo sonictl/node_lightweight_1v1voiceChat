@@ -76,9 +76,9 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // 如果请求的是非静态文件路径，返回 index.html（SPA 风格）
-    // 这样 URL 路径如 /room1 也能正确加载页面
-    const ext = path.extname(url);
+    // 去掉查询参数（支持 ?v=N 缓存破坏）
+    const cleanUrl = url.split('?')[0];
+    const ext = path.extname(cleanUrl);
     if (!MIME_TYPES[ext]) {
         // 提取房间ID用于页面显示
         const roomId = url.slice(1).split('/')[0] || 'default';
@@ -113,8 +113,8 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // 静态文件服务
-    let filePath = path.join(__dirname, 'public', url);
+    // 静态文件服务（使用去掉查询参数的路径）
+    let filePath = path.join(__dirname, 'public', cleanUrl);
 
     // 安全：防止目录穿越
     const normalizedPath = path.normalize(filePath);
