@@ -50,7 +50,23 @@ const VOICE_APP = (() => {
     let isJoined = false;
 
     // UI 元素
-    let statusEl, peersListEl, debugInfoEl, myPeerIdEl;
+    let statusEl, peersListEl, debugInfoEl, myPeerIdEl, roomStatusEl, peerPeerIdEl, peerInfoSectionEl;
+
+    // =============================================
+    // 房间状态管理
+    // =============================================
+    function updateRoomStatus() {
+        if (!roomStatusEl) return;
+        const peerCount = roomPeers.size + (isJoined ? 1 : 0);
+
+        if (!isJoined) {
+            roomStatusEl.innerHTML = '<span class="room-status waiting">⏳ 等待加入...</span>';
+        } else if (peerCount === 1) {
+            roomStatusEl.innerHTML = '<span class="room-status waiting">⏳ 等待对方加入...</span>';
+        } else if (peerCount === 2) {
+            roomStatusEl.innerHTML = '<span class="room-status active">🟢 通话中 (1v1)</span>';
+        }
+    }
 
     // =============================================
     // WebSocket 连接
@@ -112,21 +128,25 @@ const VOICE_APP = (() => {
                 myPeerId = msg.peerId;
                 myPeerIdEl.textContent = myPeerId;
                 isJoined = true;
-                setStatus(`🎙️ 已加入会议室 (${msg.roomId})`, '#4caf50');
+                setStatus(`🎙️ 已加入1v1通话房间 (${msg.roomId})`, '#4caf50');
                 if (msg.peers && msg.peers.length > 0) {
                     msg.peers.forEach(pid => addPeer(pid));
                 }
+                updateRoomStatus();
+                updatePeerInfoSection();
                 updateDebugInfo();
                 break;
 
             case 'peer_joined':
                 addPeer(msg.peerId);
+                updateRoomStatus();
                 updateDebugInfo();
                 break;
 
             case 'peer_left':
                 removePeer(msg.peerId);
                 stats.lastSeqReceived.delete(msg.peerId);
+                updateRoomStatus();
                 updateDebugInfo();
                 break;
 
@@ -136,6 +156,13 @@ const VOICE_APP = (() => {
             case 'error':
                 console.error('[Server]', msg.message);
                 setStatus(`⚠️ ${msg.message}`, '#ffa500');
+                // 如果是房间已满错误，恢复按钮状态
+                if (msg.message.includes('1v1通话房间已满')) {
+                    document.getElementById('joinBtn').disabled = false;
+                    document.getElementById('joinBtn').textContent = '📞 加入通话';
+                    document.getElementById('leaveBtn').disabled = true;
+                    cleanup();
+                }
                 break;
         }
     }
@@ -173,13 +200,31 @@ const VOICE_APP = (() => {
         if (roomPeers.has(peerId)) return;
         roomPeers.set(peerId, { firstSeq: -1, lastPacketTime: 0 });
         addPeerToList(peerId);
+        updatePeerInfoSection();
         console.log(`[PEER] ${peerId} joined`);
     }
 
     function removePeer(peerId) {
         roomPeers.delete(peerId);
         removePeerFromList(peerId);
+        updatePeerInfoSection();
         console.log(`[PEER] ${peerId} left`);
+    }
+
+    // =============================================
+    // 通话对方信息显示
+    // =============================================
+    function updatePeerInfoSection() {
+        if (!peerInfoSectionEl || !peerPeerIdEl) return;
+        // 通话中：显示对方ID（排除自己后，取第一个peer）
+        const peers = Array.from(roomPeers.keys()).filter(pid => pid !== myPeerId);
+        if (peers.length > 0 && isJoined) {
+            peerInfoSectionEl.style.display = 'flex';
+            peerPeerIdEl.textContent = peers[0];
+        } else {
+            peerInfoSectionEl.style.display = 'none';
+            peerPeerIdEl.textContent = '—';
+        }
     }
 
     // =============================================
@@ -366,7 +411,7 @@ const VOICE_APP = (() => {
             setStatus('🔄 连接信令服务器...', '#888');
             await connectWebSocket();
 
-            setStatus('🔄 加入会议室...', '#888');
+            setStatus('🔄 加入1v1通话房间...', '#888');
             ws.send(JSON.stringify({
                 type: 'join',
                 roomId: CONFIG.roomId,
@@ -396,12 +441,14 @@ const VOICE_APP = (() => {
             ws.send(JSON.stringify({ type: 'leave' }));
         }
         cleanup();
-        setStatus('⚡ 已离开房间', '#d4d4d4');
+        setStatus('⚡ 当前状态：未加入1v1通话房间', '#d4d4d4');
         document.getElementById('joinBtn').disabled = false;
-        document.getElementById('joinBtn').textContent = '📞 加入语音会议室';
+        document.getElementById('joinBtn').textContent = '📞 加入通话';
         document.getElementById('leaveBtn').disabled = true;
         roomPeers.clear();
         document.getElementById('peersList').innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
+        updatePeerInfoSection();
+        updateRoomStatus();
     }
 
     // =============================================
@@ -572,12 +619,17 @@ const VOICE_APP = (() => {
         statusEl = document.getElementById('status');
         peersListEl = document.getElementById('peersList');
         myPeerIdEl = document.getElementById('myPeerId');
+        roomStatusEl = document.getElementById('roomStatus');
+        peerPeerIdEl = document.getElementById('peerPeerId');
+        peerInfoSectionEl = document.getElementById('peerInfoSection');
 
         document.getElementById('joinBtn').onclick = joinRoom;
         document.getElementById('leaveBtn').onclick = leaveRoom;
 
+        updateRoomStatus();
+
         console.log('[VoiceApp] Ready - WebSocket + WebCodecs');
-        setStatus('⚡ 点击下方按钮加入语音会议室', '#d4d4d4');
+        setStatus('⚡ 点击下方按钮加入语音通话', '#d4d4d4');
     }
 
     return { init, joinRoom, leaveRoom };

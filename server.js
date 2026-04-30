@@ -120,7 +120,7 @@ function handleJoin(ws, msg, oldPeerId, oldRoomId) {
         handleLeave(ws, oldPeerId, oldRoomId);
     }
 
-    const newPeerId = msg.peerId || uuidv4().slice(0, 8);
+    const newPeerId = msg.peerId || uuidv4().slice(0, 4);
     const newRoomId = msg.roomId || 'default';
 
     // 确保 peerId 在房间内唯一
@@ -132,6 +132,17 @@ function handleJoin(ws, msg, oldPeerId, oldRoomId) {
     }
 
     const room = rooms.get(newRoomId);
+
+    // 限制：仅支持 1v1 通话，房间最多 2 人
+    if (room.size >= 2) {
+        ws.send(JSON.stringify({
+            type: 'error',
+            message: '❌ 房间已满，仅支持 1v1 通话'
+        }));
+        console.log(`[REJECT] Room "${newRoomId}" is full (2/2), rejected peer "${newPeerId}"`);
+        return { peerId: null, roomId: null };
+    }
+
     room.add(finalPeerId);
     peers.set(finalPeerId, { ws, roomId: newRoomId });
 
