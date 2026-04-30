@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VoiceTrans - WebSocket + Opus WASM</title>
+    <title>VoiceTrans - WebSocket + WebCodecs</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -178,7 +178,7 @@
         <h1>
             🎙️ 语音快传
             <span class="badge">WS + Opus ⚡</span>
-            <span class="badge badge-wasm">WASM</span>
+            <span class="badge badge-wasm">WebCodecs</span>
         </h1>
 
         <div class="info">
@@ -200,9 +200,6 @@
             <button id="leaveBtn" disabled>🔴 离开</button>
         </div>
 
-        <div id="coep-status" class="coep-ok">
-            ✅ Cross-Origin Isolation 正常 (WASM 共享内存可用)
-        </div>
 
         <div id="debugPanel">
             <h3>🔍 实时状态</h3>
@@ -210,11 +207,10 @@
         </div>
 
         <div class="footer-note">
-            🚀 WebSocket 直传 · Opus @ 32kbps · AudioWorklet · WASM 编解码
-            <br>极致轻量 · 资源受限环境最优解
+            🚀 WebSocket 直传 · Opus @ 32kbps · AudioWorklet · WebCodecs 原生编解码
+            <br>零依赖 · 浏览器原生支持 · 超低延迟
         </div>
     </div>
-    <script src="opus-codec.js"></script>
     <script src="client.js"></script>
 </body>
 </html>

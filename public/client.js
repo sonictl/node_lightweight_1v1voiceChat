@@ -1,6 +1,6 @@
 // =============================================
-// WebSocket + Opus(WASM) 语音客户端
-// 极致轻量 · 最低延迟 · 资源受限环境最优解
+// WebSocket + WebCodecs 语音客户端
+// 浏览器原生编解码 · 零依赖 · 超低延迟
 // =============================================
 
 const VOICE_APP = (() => {
@@ -152,44 +152,6 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
-    // Opus 音频包处理
-    // =============================================
-    function handleAudioPacket(data) {
-        if (!decoder) return;
-
-        // 二进制包格式：
-        // [0-1] 采样率 (Uint16)
-        // [2-3] 帧序号 (Uint16)
-        // [4-7] 时间戳 (Uint32, ms)
-        // [8..] Opus 编码数据
-
-        if (data.length < 8) return;
-
-        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        const sampleRate = view.getUint16(0, true);
-        const packetSeq = view.getUint16(2, true);
-        const timestamp = view.getUint32(4, true);
-        const opusData = data.slice(8);
-
-        stats.packetsRecv++;
-
-        // ---- 丢包检测（基于全局序号） ----
-        // 由于所有 peer 共享同一个序号空间，我们只做简单的乱序处理
-        // 实际的丢包隐藏由解码器的 PLC 处理
-
-        // 解码 Opus → PCM
-        const frameSize = Math.floor(CONFIG.sampleRate * CONFIG.frameDuration);
-        const pcm = decoder.decode(opusData, frameSize);
-
-        if (pcm && workletNode) {
-            workletNode.port.postMessage({
-                type: 'pcm',
-                data: pcm
-            });
-        }
-    }
-
-    // =============================================
     // 发送音频帧到服务器
     // =============================================
     function sendAudioPacket(opusData) {
@@ -260,27 +222,27 @@ const VOICE_APP = (() => {
 
             if (data.type === 'pcm') {
                 // 收到麦克风捕获的 PCM 帧 → 编码 → 发送
-                if (!encoder) return;
+                if (!encoder || encoder.state !== 'configured') return;
 
-                const opusData = encoder.encode(data.data);
-                if (opusData) {
-                    sendAudioPacket(opusData);
-                }
-                // 静音帧跳过不发送（节省带宽）
+                // 创建 AudioData 对象
+                const frameSize = data.data.length;
+                const audioData = new AudioData({
+                    format: 'f32-planar',
+                    sampleRate: CONFIG.sampleRate,
+                    numberOfFrames: frameSize,
+                    numberOfChannels: 1,
+                    timestamp: performance.now() * 1000, // 微秒
+                    data: data.data
+                });
+
+                // 编码（输出会通过 encoder 的 output 回调发送）
+                encoder.encode(audioData);
+                audioData.close();
             }
 
             if (data.type === 'underrun') {
-                // 播放端欠载 - 解码器需要补帧
-                if (decoder) {
-                    const frameSize = Math.floor(CONFIG.sampleRate * CONFIG.frameDuration);
-                    const plcPcm = decoder.decodePLC(frameSize);
-                    if (workletNode) {
-                        workletNode.port.postMessage({
-                            type: 'pcm',
-                            data: plcPcm
-                        });
-                    }
-                }
+                // 播放端欠载 - 可以发送静音帧或等待
+                console.warn('[Playback] Buffer underrun');
             }
         };
 
@@ -323,23 +285,68 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
-    // Opus 编解码器初始化
+    // WebCodecs 编解码器初始化
     // =============================================
     async function initCodec() {
-        // 编码器：48kHz 单声道，VOIP 模式，复杂度 3（低延迟优化）
-        encoder = new OPUS_CODEC.OpusEncoder(
-            CONFIG.sampleRate,
-            1,
-            OPUS_CODEC.APPLICATION_VOIP,
-            3
-        );
-        await encoder.init();
+        // 检查浏览器支持
+        if (!window.AudioEncoder || !window.AudioDecoder) {
+            throw new Error('浏览器不支持 WebCodecs API');
+        }
 
-        // 解码器
-        decoder = new OPUS_CODEC.OpusDecoder(CONFIG.sampleRate, 1);
-        await decoder.init();
+        // 编码器配置
+        const encoderConfig = {
+            codec: 'opus',
+            sampleRate: CONFIG.sampleRate,
+            numberOfChannels: 1,
+            bitrate: CONFIG.opusBitrate
+        };
 
-        console.log('[Codec] Encoder + Decoder ready');
+        // 创建编码器
+        encoder = new AudioEncoder({
+            output: (chunk, metadata) => {
+                // 编码完成的 Opus 数据
+                const opusData = new Uint8Array(chunk.byteLength);
+                chunk.copyTo(opusData);
+                sendAudioPacket(opusData);
+            },
+            error: (e) => {
+                console.error('[Encoder] Error:', e);
+            }
+        });
+
+        encoder.configure(encoderConfig);
+
+        // 解码器配置
+        const decoderConfig = {
+            codec: 'opus',
+            sampleRate: CONFIG.sampleRate,
+            numberOfChannels: 1
+        };
+
+        // 创建解码器
+        decoder = new AudioDecoder({
+            output: (audioData) => {
+                // 解码完成的 PCM 数据
+                if (workletNode) {
+                    // 提取 PCM 数据
+                    const pcmData = new Float32Array(audioData.numberOfFrames);
+                    audioData.copyTo(pcmData, { planeIndex: 0 });
+                    
+                    workletNode.port.postMessage({
+                        type: 'pcm',
+                        data: pcmData
+                    });
+                }
+                audioData.close();
+            },
+            error: (e) => {
+                console.error('[Decoder] Error:', e);
+            }
+        });
+
+        decoder.configure(decoderConfig);
+
+        console.log('[Codec] WebCodecs Encoder + Decoder ready');
     }
 
     // =============================================
@@ -350,9 +357,9 @@ const VOICE_APP = (() => {
         isInitializing = true;
 
         try {
-            setStatus('🔄 加载 Opus WASM 编解码器...', '#888');
+            setStatus('🔄 初始化 WebCodecs 编解码器...', '#888');
 
-            // 1. 加载 Opus WASM
+            // 1. 初始化 WebCodecs 编解码器
             await initCodec();
 
             setStatus('🔄 初始化音频系统...', '#888');
@@ -448,12 +455,16 @@ const VOICE_APP = (() => {
         isJoined = false;
 
         if (encoder) {
-            encoder.destroy();
+            if (encoder.state !== 'closed') {
+                encoder.close();
+            }
             encoder = null;
         }
 
         if (decoder) {
-            decoder.destroy();
+            if (decoder.state !== 'closed') {
+                decoder.close();
+            }
             decoder = null;
         }
 
@@ -500,43 +511,84 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
+    // Opus 音频包处理
+    // =============================================
+    function handleAudioPacket(data) {
+        if (!decoder || decoder.state !== 'configured') return;
+
+        // 二进制包格式：
+        // [0-1] 采样率 (Uint16)
+        // [2-3] 帧序号 (Uint16)
+        // [4-7] 时间戳 (Uint32, ms)
+        // [8..] Opus 编码数据
+
+        if (data.length < 8) return;
+
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const sampleRate = view.getUint16(0, true);
+        const packetSeq = view.getUint16(2, true);
+        const timestamp = view.getUint32(4, true);
+        const opusData = data.slice(8);
+
+        stats.packetsRecv++;
+        stats.bytesRecv += data.length;
+
+        // 创建 EncodedAudioChunk 用于解码
+        const chunk = new EncodedAudioChunk({
+            type: 'key', // Opus 每帧都是关键帧
+            timestamp: timestamp * 1000, // 转换为微秒
+            data: opusData
+        });
+
+        // 解码（输出会通过 decoder 的 output 回调处理）
+        decoder.decode(chunk);
+    }
+
+    // =============================================
     // UI 辅助函数
     // =============================================
     function setStatus(text, color) {
         if (statusEl) {
             statusEl.textContent = text;
-            statusEl.style.color = color || '#d4d4d4';
+            statusEl.style.color = color;
         }
     }
 
     function addPeerToList(peerId) {
-        const list = document.getElementById('peersList');
-        // 清除 "暂无其他成员" 占位
-        const placeholder = list.querySelector('span');
-        if (placeholder && roomPeers.size === 0) {
-            list.innerHTML = '';
-        }
+        if (!peersListEl) return;
 
-        const div = document.createElement('div');
-        div.className = 'peer-item';
-        div.id = `peer-${peerId}`;
-        div.innerHTML = `🎤 ${peerId}`;
-        list.appendChild(div);
+        // 移除"暂无成员"提示
+        const emptyMsg = peersListEl.querySelector('span[style*="color:#666"]');
+        if (emptyMsg) emptyMsg.remove();
+
+        const peerDiv = document.createElement('div');
+        peerDiv.id = `peer-${peerId}`;
+        peerDiv.className = 'peer-item';
+        peerDiv.innerHTML = `
+            <span class="peer-id">👤 ${peerId}</span>
+            <span class="peer-status">🟢 在线</span>
+        `;
+        peersListEl.appendChild(peerDiv);
     }
 
     function removePeerFromList(peerId) {
-        const el = document.getElementById(`peer-${peerId}`);
-        if (el) el.remove();
-        // 如果没人了，显示占位
-        if (document.getElementById('peersList').children.length === 0) {
-            document.getElementById('peersList').innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
+        if (!peersListEl) return;
+
+        const peerDiv = document.getElementById(`peer-${peerId}`);
+        if (peerDiv) peerDiv.remove();
+
+        // 如果没有其他成员了，显示提示
+        if (peersListEl.children.length === 0) {
+            peersListEl.innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
         }
     }
 
     function startStatsUpdater() {
         setInterval(() => {
-            updateDebugInfo();
-        }, 2000);
+            if (isJoined) {
+                updateDebugInfo();
+            }
+        }, 1000);
     }
 
     function updateDebugInfo() {
@@ -570,7 +622,7 @@ const VOICE_APP = (() => {
         document.getElementById('joinBtn').onclick = joinRoom;
         document.getElementById('leaveBtn').onclick = leaveRoom;
 
-        console.log('[VoiceApp] Ready - WebSocket + Opus WASM');
+        console.log('[VoiceApp] Ready - WebSocket + WebCodecs');
         setStatus('⚡ 点击下方按钮加入语音会议室', '#d4d4d4');
     }
 
