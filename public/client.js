@@ -254,7 +254,7 @@ const VOICE_APP = (() => {
         });
 
         // 加载 AudioWorklet
-        await audioCtx.audioWorklet.addModule('/audio-worklet.js');
+        await audioCtx.audioWorklet.addModule('/audio-worklet.js?v=1');
 
         // 创建 Worklet 节点
         workletNode = new AudioWorkletNode(audioCtx, 'voice-worklet');
