@@ -1,295 +1,280 @@
-const WebSocket = require('ws');
+// =============================================
+// WebSocket + Opus(WASM) 语音中继服务器
+// 极致轻量 · 最低延迟 · 资源受限环境最优解
+// =============================================
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { v4: uuidv4 } = require('uuid');
 
-// 配置
 const PORT = 4001;
-const BUFFER_POOL_SIZE = 4096;      // 每个连接的接收缓冲区大小
-const MAX_CLIENTS = 50;              // 最大客户端数
-const CONNECTION_TIMEOUT = 60000;    // 60秒无活动断开
-
-// 内存存储
-const clients = new Map();           // clientId -> WebSocket
-const clientInfo = new Map();        // WebSocket -> {clientId, lastActive, pendingWrites}
-const peerMap = new Map();           // clientId -> targetClientId
-
-// MIME 类型映射
 const MIME_TYPES = {
     '.html': 'text/html',
     '.js': 'application/javascript',
     '.wasm': 'application/wasm',
     '.css': 'text/css',
-    '.json': 'application/json',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.svg': 'image/svg+xml'
+    '.json': 'application/json'
 };
 
-// 创建 HTTP 服务器（提供静态文件）
+// =============================================
+// HTTP 静态文件服务器
+// =============================================
 const server = http.createServer((req, res) => {
     const url = req.url;
-    
-    // 特殊路由：提供 opus-recorder 的 Worker/WASM 文件
-    if (url === '/encoderWorker.min.js') {
-        serveFile(res, path.join(__dirname, 'node_modules', 'opus-recorder', 'dist', 'encoderWorker.min.js'), 'application/javascript');
-        return;
-    }
-    if (url === '/encoderWorker.min.wasm') {
-        serveFile(res, path.join(__dirname, 'node_modules', 'opus-recorder', 'dist', 'encoderWorker.min.wasm'), 'application/wasm');
-        return;
-    }
-    if (url === '/decoderWorker.min.js') {
-        serveFile(res, path.join(__dirname, 'node_modules', 'opus-recorder', 'dist', 'decoderWorker.min.js'), 'application/javascript');
-        return;
-    }
-    if (url === '/decoderWorker.min.wasm') {
-        serveFile(res, path.join(__dirname, 'node_modules', 'opus-recorder', 'dist', 'decoderWorker.min.wasm'), 'application/wasm');
-        return;
-    }
-    if (url === '/waveWorker.min.js') {
-        serveFile(res, path.join(__dirname, 'node_modules', 'opus-recorder', 'dist', 'waveWorker.min.js'), 'application/javascript');
-        return;
-    }
-    if (url === '/recorder.min.js') {
-        serveFile(res, path.join(__dirname, 'node_modules', 'opus-recorder', 'dist', 'recorder.min.js'), 'application/javascript');
-        return;
-    }
-    
-    // 普通静态文件
-    const filePath = path.join(__dirname, 'public', url === '/' ? 'index.html' : url);
-    const ext = path.extname(filePath);
-    const contentType = MIME_TYPES[ext] || 'text/plain';
-    
-    serveFile(res, filePath, contentType);
-});
+    let filePath = path.join(__dirname, 'public', url === '/' ? 'index.html' : url);
 
-// 文件服务辅助函数
-function serveFile(res, filePath, contentType) {
+    // 安全：防止目录穿越
+    const normalizedPath = path.normalize(filePath);
+    if (!normalizedPath.startsWith(path.join(__dirname, 'public'))) {
+        res.writeHead(403);
+        res.end('Forbidden');
+        return;
+    }
+
+    const ext = path.extname(filePath);
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
     fs.readFile(filePath, (err, data) => {
         if (err) {
             res.writeHead(404);
-            res.end('404 Not Found: ' + path.basename(filePath));
+            res.end('404 Not Found');
             return;
         }
-        res.writeHead(200, { 'Content-Type': contentType });
+        res.writeHead(200, {
+            'Content-Type': contentType,
+            'Cross-Origin-Opener-Policy': 'same-origin',
+            'Cross-Origin-Embedder-Policy': 'require-corp'
+        });
         res.end(data);
     });
-}
+});
 
-// WebSocket 服务器（禁用 permessage-deflate）
-const wss = new WebSocket.Server({ 
+// =============================================
+// WebSocket 服务器
+// =============================================
+const WebSocket = require('ws');
+const wss = new WebSocket.Server({
     server,
-    perMessageDeflate: false,  // 关键：禁用压缩，节省CPU
-    maxPayload: 20 * 1024      // 20KB（安全边界，容纳音频帧）
+    maxPayload: 1024 * 1024 // 1MB max per message
 });
 
-// 监控统计
-let stats = {
-    totalPackets: 0,
-    totalBytes: 0,
-    lastReport: Date.now(),
-    packetsPerSecond: 0
-};
+// =============================================
+// 房间状态
+// =============================================
+const rooms = new Map();   // roomId -> Set<peerId>
+const peers = new Map();   // peerId -> { ws, roomId }
 
-setInterval(() => {
-    const now = Date.now();
-    const elapsed = (now - stats.lastReport) / 1000;
-    const pps = stats.packetsPerSecond / elapsed;
-    const bps = (stats.totalBytes * 8) / elapsed;
-    
-    console.log(`[STATS] ${Math.round(pps)} pkts/s | ${Math.round(bps)} bps (${(bps/1024).toFixed(1)} kb/s) | Clients: ${clients.size}`);
-    
-    stats.packetsPerSecond = 0;
-    stats.totalBytes = 0;
-    stats.lastReport = now;
-}, 5000);
+// =============================================
+// WebSocket 事件处理
+// =============================================
+wss.on('connection', (ws) => {
+    let peerId = null;
+    let roomId = null;
 
-// WebSocket 连接处理
-wss.on('connection', (ws, req) => {
-    // 初始化客户端
-    let clientId = null;
-    let lastActive = Date.now();
-    
-    // 设置 TCP_NODELAY（禁用 Nagle 算法）
-    ws._socket.setNoDelay(true);
-    
-    // 设置超时监控
-    const timeoutInterval = setInterval(() => {
-        if (Date.now() - lastActive > CONNECTION_TIMEOUT) {
-            console.log(`[TIMEOUT] Client ${clientId} inactive for ${CONNECTION_TIMEOUT}ms`);
-            ws.terminate();
-        }
-    }, 10000);
-    
+    // ---- 消息处理 ----
     ws.on('message', (data, isBinary) => {
-        if (!isBinary) {
-            // 处理文本信令（注册/配对）
-            handleSignaling(ws, data.toString(), clientId, (id) => { clientId = id; });
-            lastActive = Date.now();
-            return;
-        }
-        
-        // 处理二进制音频数据（直接转发）
-        lastActive = Date.now();
-        
-        // 极简解析：4字节Header [type(1) + seq(1) + targetId(2)]
-        if (data.length < 4) return;
-        
-        const targetId = String(data.readUInt16BE(2));  // 目标客户端ID（转为字符串匹配）
-        const audioData = data.slice(4);         // Opus 负载
-        
-        // 统计
-        stats.totalPackets++;
-        stats.packetsPerSecond++;
-        stats.totalBytes += data.length;
-        
-        // 零拷贝转发
-        const targetWs = clients.get(targetId);
-        if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-            // 检查发送队列积压（防止内存爆炸）
-            const info = clientInfo.get(targetWs);
-            if (info && info.pendingWrites > 10) {
-                // 目标客户端接收太慢，丢弃此包
-                return;
-            }
-            
-            // 直接发送，不做任何处理
-            targetWs.send(data, { binary: true }, (err) => {
-                if (err && err.code !== 'ERR_STREAM_WRITE_AFTER_END') {
-                    // 发送失败，清理连接
-                    cleanupClient(targetWs);
+        try {
+            if (isBinary) {
+                handleBinaryMessage(ws, peerId, roomId, data);
+            } else {
+                const msg = JSON.parse(data.toString());
+                switch (msg.type) {
+                    case 'join':
+                        ({ peerId, roomId } = handleJoin(ws, msg, peerId, roomId));
+                        break;
+                    case 'leave':
+                        handleLeave(ws, peerId, roomId);
+                        peerId = null;
+                        roomId = null;
+                        break;
+                    case 'ping':
+                        ws.send(JSON.stringify({ type: 'pong', t: msg.t }));
+                        break;
                 }
-                // 发送完成（成功或失败都减1），防止 pendingWrites 只增不减导致所有后续包被丢弃
-                const targetInfo = clientInfo.get(targetWs);
-                if (targetInfo) targetInfo.pendingWrites--;
-            });
-            
-            // 更新积压计数
-            const targetInfo = clientInfo.get(targetWs);
-            if (targetInfo) targetInfo.pendingWrites++;
+            }
+        } catch (err) {
+            console.error(`[WS] Error: ${err.message}`);
         }
     });
-    
-    ws.on('error', (err) => {
-        console.error(`[ERROR] Client ${clientId}: ${err.message}`);
-    });
-    
+
+    // ---- 断开连接 ----
     ws.on('close', () => {
-        clearInterval(timeoutInterval);
-        cleanupClient(ws);
-        if (clientId) {
-            clients.delete(clientId);
-            peerMap.delete(clientId);
-            console.log(`[CLOSE] Client ${clientId} disconnected. Active: ${clients.size}`);
+        if (peerId && roomId) {
+            handleLeave(ws, peerId, roomId);
         }
     });
-    
-    // 初始化客户端信息
-    clientInfo.set(ws, { pendingWrites: 0 });
+
+    ws.on('error', () => {
+        if (peerId && roomId) {
+            handleLeave(ws, peerId, roomId);
+        }
+    });
 });
 
-// 信令处理（极简）
-function handleSignaling(ws, message, existingClientId, setClientId) {
-    try {
-        const data = JSON.parse(message);
-        
-        switch (data.type) {
-            case 'register':
-                // 注册客户端ID
-                let clientId = data.clientId || `user_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-                if (clients.has(clientId)) {
-                    clientId = `${clientId}_${Date.now()}`;
-                }
-                clients.set(clientId, ws);
-                setClientId(clientId);
-                
-                // 绑定客户端ID到ws对象
-                ws.clientId = clientId;
-                
-                ws.send(JSON.stringify({ type: 'registered', clientId }));
-                console.log(`[REGISTER] ${clientId} registered. Active: ${clients.size}`);
-                
-                // 通知现有连接数（调试用）
-                if (clients.size === 2) {
-                    console.log('[INFO] 2 clients connected, ready for P2P voice');
-                }
-                break;
-                
-            case 'call':
-                // 用户A呼叫用户B：通知B有人呼叫
-                const callerId = data.callerId;   // 呼叫者ID
-                const targetId = data.targetId;   // 被呼叫者ID
-                const targetWs = clients.get(targetId);
-                
-                if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-                    // 通知被呼叫者：有人呼入
-                    targetWs.send(JSON.stringify({
-                        type: 'incoming_call',
-                        callerId: callerId
-                    }));
-                    console.log(`[CALL] ${callerId} → ${targetId} (notified)`);
-                    
-                    // 回复呼叫者：通知已送达
-                    ws.send(JSON.stringify({
-                        type: 'call_ringing',
-                        targetId: targetId
-                    }));
-                } else {
-                    // 被呼叫者不在线
-                    ws.send(JSON.stringify({
-                        type: 'call_error',
-                        message: `对方 ${targetId} 不在线`
-                    }));
-                    console.log(`[CALL] ${callerId} → ${targetId} FAILED (offline)`);
-                }
-                break;
-                
-            case 'call_accept':
-                // 被呼叫者接受呼叫：通知呼叫者
-                const accepterId = data.accepterId;
-                const callerWs = clients.get(data.callerId);
-                
-                if (callerWs && callerWs.readyState === WebSocket.OPEN) {
-                    callerWs.send(JSON.stringify({
-                        type: 'call_connected',
-                        peerId: accepterId
-                    }));
-                    console.log(`[CALL] ${accepterId} accepted call from ${data.callerId}`);
-                }
-                break;
-                
-            case 'call_hangup':
-                // 一方挂断：通知另一方
-                const peerId = data.peerId;
-                const peerWs = clients.get(peerId);
-                
-                if (peerWs && peerWs.readyState === WebSocket.OPEN) {
-                    peerWs.send(JSON.stringify({
-                        type: 'peer_hangup',
-                        fromId: data.fromId
-                    }));
-                    console.log(`[CALL] ${data.fromId} hung up, notified ${peerId}`);
-                }
-                break;
+// =============================================
+// 加入房间
+// =============================================
+function handleJoin(ws, msg, oldPeerId, oldRoomId) {
+    // 先离开旧房间
+    if (oldPeerId && oldRoomId) {
+        handleLeave(ws, oldPeerId, oldRoomId);
+    }
+
+    const newPeerId = msg.peerId || uuidv4().slice(0, 8);
+    const newRoomId = msg.roomId || 'default';
+
+    // 确保 peerId 在房间内唯一
+    const finalPeerId = ensureUniquePeerId(newRoomId, newPeerId);
+
+    // 创建房间（如果不存在）
+    if (!rooms.has(newRoomId)) {
+        rooms.set(newRoomId, new Set());
+    }
+
+    const room = rooms.get(newRoomId);
+    room.add(finalPeerId);
+    peers.set(finalPeerId, { ws, roomId: newRoomId });
+
+    // 获取房间内其他 peer 列表
+    const existingPeers = Array.from(room).filter(id => id !== finalPeerId);
+
+    // 回复加入成功
+    ws.send(JSON.stringify({
+        type: 'joined',
+        peerId: finalPeerId,
+        roomId: newRoomId,
+        peers: existingPeers
+    }));
+
+    // 通知房间内其他 peer
+    broadcastToRoom(newRoomId, {
+        type: 'peer_joined',
+        peerId: finalPeerId
+    }, finalPeerId);
+
+    console.log(`[JOIN] Peer "${finalPeerId}" joined room "${newRoomId}" (${room.size} peers)`);
+
+    return { peerId: finalPeerId, roomId: newRoomId };
+}
+
+function ensureUniquePeerId(roomId, baseId) {
+    const room = rooms.get(roomId);
+    if (!room || !room.has(baseId)) return baseId;
+
+    // 如果 ID 冲突，追加数字后缀
+    let counter = 1;
+    while (room.has(`${baseId}_${counter}`)) {
+        counter++;
+    }
+    return `${baseId}_${counter}`;
+}
+
+// =============================================
+// 离开房间
+// =============================================
+function handleLeave(ws, peerId, roomId) {
+    if (!peerId || !roomId) return;
+
+    const room = rooms.get(roomId);
+    if (room) {
+        room.delete(peerId);
+
+        // 通知房间内其他人
+        broadcastToRoom(roomId, {
+            type: 'peer_left',
+            peerId
+        }, peerId);
+
+        console.log(`[LEAVE] Peer "${peerId}" left room "${roomId}" (${room.size} peers remain)`);
+
+        // 如果房间空了，清理
+        if (room.size === 0) {
+            rooms.delete(roomId);
+            console.log(`[ROOM] Room "${roomId}" deleted (empty)`);
         }
-    } catch (e) {
-        console.error('[SIGNAL] Parse error:', e.message);
+    }
+
+    peers.delete(peerId);
+}
+
+// =============================================
+// 二进制音频数据中继
+// =============================================
+function handleBinaryMessage(ws, peerId, roomId, data) {
+    if (!peerId || !roomId) {
+        console.warn('[BINARY] Received from unregistered peer');
+        return;
+    }
+
+    // Opus 数据包的二进制格式：
+    // [0-1] 采样率 (Uint16, Hz)
+    // [2-3] 帧序号 (Uint16, 用于丢包检测)
+    // [4-7] 时间戳 (Uint32, ms)
+    // [8..] Opus 编码数据
+
+    // 广播给房间内所有其他 peer
+    broadcastBinaryToRoom(roomId, data, peerId);
+}
+
+// =============================================
+// 广播
+// =============================================
+function broadcastToRoom(roomId, message, excludePeerId) {
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    const jsonStr = JSON.stringify(message);
+
+    for (const pid of room) {
+        if (pid === excludePeerId) continue;
+        const peer = peers.get(pid);
+        if (peer && peer.ws.readyState === WebSocket.OPEN) {
+            peer.ws.send(jsonStr);
+        }
     }
 }
 
-// 清理客户端资源
-function cleanupClient(ws) {
-    const info = clientInfo.get(ws);
-    if (info) {
-        clientInfo.delete(ws);
+function broadcastBinaryToRoom(roomId, data, excludePeerId) {
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    for (const pid of room) {
+        if (pid === excludePeerId) continue;
+        const peer = peers.get(pid);
+        if (peer && peer.ws.readyState === WebSocket.OPEN) {
+            peer.ws.send(data);
+        }
     }
 }
 
-// 启动服务器
+// =============================================
+// 健康检查：定期清理断开的连接
+// =============================================
+setInterval(() => {
+    for (const [pid, peer] of peers) {
+        if (peer.ws.readyState !== WebSocket.OPEN) {
+            const room = rooms.get(peer.roomId);
+            if (room) {
+                room.delete(pid);
+                broadcastToRoom(peer.roomId, { type: 'peer_left', peerId: pid }, pid);
+                if (room.size === 0) {
+                    rooms.delete(peer.roomId);
+                }
+            }
+            peers.delete(pid);
+            console.log(`[CLEANUP] Removed stale peer "${pid}"`);
+        }
+    }
+}, 30000);
+
+// =============================================
+// 启动
+// =============================================
 server.listen(PORT, () => {
-    console.log(`[SERVER] Ultra-lightweight voice relay running on port ${PORT}`);
-    console.log(`[CONFIG] TCP_NODELAY: enabled | perMessageDeflate: disabled`);
-    console.log(`[LIMITS] Max clients: ${MAX_CLIENTS} | Buffer pool: ${BUFFER_POOL_SIZE} bytes`);
-    console.log(`[ROUTES] Worker/WASM files served from node_modules/opus-recorder/dist/`);
+    console.log('═══════════════════════════════════════════');
+    console.log('  WebSocket + Opus(WASM) Voice Relay');
+    console.log(`  Server: http://localhost:${PORT}`);
+    console.log(`  WS:     ws://localhost:${PORT}`);
+    console.log('═══════════════════════════════════════════');
+    console.log('[READY] Minimal latency relay running');
 });

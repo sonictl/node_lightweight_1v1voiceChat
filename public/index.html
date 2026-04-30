@@ -2,32 +2,121 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>极简语音转发系统</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceTrans - WebSocket + Opus WASM</title>
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
-            max-width: 600px;
-            margin: 50px auto;
-            padding: 20px;
             background: #1e1e1e;
             color: #d4d4d4;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
         .container {
             background: #2d2d2d;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            padding: 28px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            width: 500px;
+            max-width: 95vw;
+        }
+        h1 {
+            font-size: 20px;
+            text-align: center;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        h1 .badge {
+            background: #0e639c;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: normal;
+        }
+        .badge-wasm {
+            background: #7c3aed;
+            color: #e9d5ff;
+        }
+        .info {
+            background: #1e1e1e;
+            padding: 12px 14px;
+            margin: 10px 0;
+            border-left: 3px solid #7c3aed;
+            font-size: 13px;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .info .id-value {
+            color: #4caf50;
+            font-size: 18px;
+            font-weight: bold;
+            font-family: monospace;
+        }
+        .status {
+            background: #1e1e1e;
+            padding: 14px;
+            text-align: center;
+            font-weight: bold;
+            border-radius: 6px;
+            font-size: 15px;
+            margin: 12px 0;
+            min-height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .peers-section {
+            background: #1e1e1e;
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin: 10px 0;
+        }
+        .peers-section h3 {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .peers-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        .peer-item {
+            background: #3d3d3d;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 14px;
         }
         button {
+            flex: 1;
             background: #0e639c;
             color: white;
             border: none;
-            padding: 12px 24px;
-            margin: 5px;
+            padding: 14px 20px;
             cursor: pointer;
-            border-radius: 4px;
+            border-radius: 6px;
             font-size: 16px;
             transition: all 0.2s;
+            font-weight: 500;
         }
         button:hover:not(:disabled) {
             background: #1177bb;
@@ -38,116 +127,94 @@
             cursor: not-allowed;
             opacity: 0.6;
         }
-        #hangupBtn {
+        #leaveBtn {
             background: #d16969;
         }
-        #hangupBtn:hover:not(:disabled) {
+        #leaveBtn:hover:not(:disabled) {
             background: #e07b7b;
         }
-        .info {
-            background: #1e1e1e;
-            padding: 12px;
-            margin: 10px 0;
-            border-left: 3px solid #0e639c;
-            font-size: 13px;
-            border-radius: 4px;
+        #debugPanel {
+            background: #1a1a1a;
+            padding: 12px 14px;
+            margin-top: 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            display: none;
         }
-        .status {
-            margin: 20px 0;
-            padding: 15px;
-            background: #1e1e1e;
-            text-align: center;
-            font-weight: bold;
-            border-radius: 4px;
-            font-size: 16px;
-        }
-        h1 {
-            font-size: 22px;
-            margin: 0 0 20px 0;
-            text-align: center;
-        }
-        .badge {
-            display: inline-block;
-            background: #0e639c;
-            padding: 4px 8px;
-            border-radius: 4px;
+        #debugPanel h3 {
             font-size: 11px;
-            margin-left: 8px;
+            color: #888;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
-        code {
-            background: #1e1e1e;
-            padding: 2px 6px;
-            border-radius: 3px;
+        #debugInfo {
             font-family: monospace;
-            color: #ce9178;
+            line-height: 1.8;
+            color: #aaa;
         }
-        .input-group {
-            display: flex;
-            gap: 8px;
-            margin: 10px 0;
-            align-items: center;
-        }
-        .input-group label {
-            font-size: 13px;
-            white-space: nowrap;
-        }
-        .input-group input {
-            flex: 1;
-            background: #1e1e1e;
-            border: 1px solid #555;
-            color: #d4d4d4;
-            padding: 10px 12px;
-            border-radius: 4px;
-            font-size: 16px;
-            font-family: monospace;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-        .input-group input:focus {
-            border-color: #0e639c;
-        }
-        .input-group input::placeholder {
-            color: #666;
-        }
-        .btn-group {
+        .footer-note {
             text-align: center;
+            font-size: 11px;
+            color: #666;
+            margin-top: 14px;
+            border-top: 1px solid #3d3d3d;
+            padding-top: 12px;
+        }
+        #coep-status {
+            font-size: 12px;
+            text-align: center;
+            padding: 8px;
+            background: #2d2d2d;
+            border-radius: 6px;
             margin-top: 10px;
         }
+        .coep-ok { color: #4caf50; }
+        .coep-fail { color: #d16969; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎙️ 极简语音转发系统 <span class="badge">Ultra-Light</span></h1>
+        <h1>
+            🎙️ 语音快传
+            <span class="badge">WS + Opus ⚡</span>
+            <span class="badge badge-wasm">WASM</span>
+        </h1>
+
         <div class="info">
-            <strong>🆔 你的 ID:</strong> <span id="clientId" style="color: #4caf50; font-size: 18px; font-weight: bold;">connecting...</span>
-            <br>
-            <small>把这个ID告诉对方，让对方输入到下面的框里</small>
+            <span>🆔 你的 ID</span>
+            <span class="id-value" id="myPeerId">—</span>
         </div>
-        <div class="input-group">
-            <label for="targetInput">📞 对方 ID:</label>
-            <input type="text" id="targetInput" placeholder="输入对方的4位数字ID" maxlength="4" autocomplete="off">
-        </div>
-        <div class="status" id="status">
-            ⚡ 空闲
-        </div>
-        <div class="btn-group">
-            <button id="callBtn">📞 开始通话</button>
-            <button id="hangupBtn">🔴 挂断</button>
-        </div>
-        <div class="info" style="margin-top: 20px; font-size: 11px;">
-            <strong>⚙️ 技术规格:</strong><br>
-            • 采样率: <code>48kHz</code> | 编码: <code>Opus @ 8kbps CBR</code> | 帧长: <code>40ms</code><br>
-            • Jitter Buffer: <code>5帧</code> | 丢包补偿: <code>启用</code> | 回声消除: <code>浏览器底层</code><br>
-            • 带宽消耗: <code>~3KB/s</code> 双向 | 支持并发: <code>10-15对</code> @ 300kb/s<br>
-            • 服务器: <code>Node.js + WebSocket</code> | 零拷贝转发
-        </div>
-        <div id="debugPanel" class="info" style="margin-top: 10px; font-size: 11px; display: none; background: #1a1a1a;">
-            <strong>🔍 实时调试信息:</strong><br>
-            <div id="debugInfo" style="font-family: monospace; line-height: 1.6; color: #888;">
-                等待通话建立...
+
+        <div class="peers-section">
+            <h3>👥 房间成员</h3>
+            <div class="peers-list" id="peersList">
+                <span style="color:#666; font-size:13px;">暂无其他成员</span>
             </div>
         </div>
+
+        <div class="status" id="status">⚡ 点击下方按钮加入语音会议室</div>
+
+        <div class="btn-group">
+            <button id="joinBtn">📞 加入语音会议室</button>
+            <button id="leaveBtn" disabled>🔴 离开</button>
+        </div>
+
+        <div id="coep-status" class="coep-ok">
+            ✅ Cross-Origin Isolation 正常 (WASM 共享内存可用)
+        </div>
+
+        <div id="debugPanel">
+            <h3>🔍 实时状态</h3>
+            <div id="debugInfo">等待加入...</div>
+        </div>
+
+        <div class="footer-note">
+            🚀 WebSocket 直传 · Opus @ 32kbps · AudioWorklet · WASM 编解码
+            <br>极致轻量 · 资源受限环境最优解
+        </div>
     </div>
-    <script type="module" src="client.js"></script>
+    <script src="opus-codec.js"></script>
+    <script src="client.js"></script>
 </body>
 </html>
