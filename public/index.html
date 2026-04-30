@@ -32,15 +32,71 @@
         </div>
 
         <div class="info peer-info" id="peerInfoSection">
-            <span>👤 通话对象</span>
+            <span>👤 对方ID</span>
             <span class="peer-id-value" id="peerPeerId">—</span>
         </div>
 
-        <div class="status" id="status">⚡ 点击下方按钮加入语音通话</div>
+        <!-- 编解码配置面板 -->
+        <div class="config-section" id="configSection">
+            <h3>⚙️ 编解码配置</h3>
+            <div class="config-grid">
+                <div class="config-item">
+                    <label>采样率</label>
+                    <select id="configSampleRate">
+                        <option value="48000">48 kHz</option>
+                        <option value="24000">24 kHz</option>
+                        <option value="16000">16 kHz</option>
+                        <option value="8000">8 kHz</option>
+                    </select>
+                </div>
+                <div class="config-item">
+                    <label>比特率</label>
+                    <select id="configBitrate">
+                        <option value="64000">64 kbps</option>
+                        <option value="32000" selected>32 kbps</option>
+                        <option value="16000">16 kbps</option>
+                        <option value="8000">8 kbps</option>
+                    </select>
+                </div>
+                <div class="config-item">
+                    <label>帧长</label>
+                    <select id="configFrameDuration">
+                        <option value="0.02">20 ms</option>
+                        <option value="0.04" selected>40 ms</option>
+                        <option value="0.06">60 ms</option>
+                        <option value="0.12">120 ms</option>
+                    </select>
+                </div>
+                <div class="config-item">
+                    <label>抖动缓冲</label>
+                    <select id="configJitter">
+                        <option value="2">2 帧</option>
+                        <option value="4" selected>4 帧</option>
+                        <option value="6">6 帧</option>
+                        <option value="8">8 帧</option>
+                    </select>
+                </div>
+            </div>
+            <div class="config-presets">
+                <span class="preset-label">预设模式：</span>
+                <button class="preset-btn" data-preset="low-latency">🚀 低延迟</button>
+                <button class="preset-btn" data-preset="balanced">⚖️ 均衡</button>
+                <button class="preset-btn" data-preset="high-quality">🎵 高清</button>
+                <button class="preset-btn" data-preset="weak-network">📡 弱网</button>
+            </div>
+        </div>
+
+        <!-- 房间编解码配置显示 -->
+        <div class="room-config-info" id="roomConfigInfo" style="display:none;">
+            <h3>📋 房间编解码配置</h3>
+            <div id="roomConfigDetails"></div>
+        </div>
+
+        <div class="status" id="status">⚡ 点击下方按钮加入1v1语音通话</div>
 
         <div class="btn-group">
             <button id="joinBtn">📞 加入通话</button>
-            <button id="leaveBtn" disabled>❌ 断开通话</button>
+            <button id="leaveBtn" disabled>❌ 退出通话</button>
         </div>
 
 
@@ -50,7 +106,7 @@
         </div>
 
         <div class="footer-note">
-            � WebSocket 直传 · Opus @ 32kbps · AudioWorklet · WebCodecs 原生编解码
+            � WebSocket 直传 · Opus @ 32kbps · AudioWorklet · WebCodecs 编解码
             <br>浏览器原生 · 超低延迟
         </div>
     </div>

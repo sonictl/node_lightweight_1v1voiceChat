@@ -53,6 +53,8 @@ const VOICE_APP = (() => {
 
     // UI 元素
     let statusEl, peersListEl, debugInfoEl, myPeerIdEl, roomStatusEl, peerPeerIdEl, peerInfoSectionEl, roomIdDisplayEl;
+    let configSectionEl, roomConfigInfoEl, roomConfigDetailsEl;
+    let configSampleRateEl, configBitrateEl, configFrameDurationEl, configJitterEl;
 
     // =============================================
     // 房间状态管理
@@ -131,6 +133,17 @@ const VOICE_APP = (() => {
                 myPeerIdEl.textContent = myPeerId;
                 isJoined = true;
                 setStatus(`🎙️ 已加入1v1通话房间 (${msg.roomId})`, '#4caf50');
+
+                // 应用服务端下发的编解码配置
+                if (msg.codecConfig) {
+                    applyRoomConfig(msg.codecConfig);
+                }
+
+                // 如果房间已有其他成员，说明配置已由先加入者决定，隐藏配置面板
+                if (msg.peers && msg.peers.length > 0 && configSectionEl) {
+                    configSectionEl.style.display = 'none';
+                }
+
                 if (msg.peers && msg.peers.length > 0) {
                     msg.peers.forEach(pid => addPeer(pid));
                 }
@@ -414,15 +427,22 @@ const VOICE_APP = (() => {
             await connectWebSocket();
 
             setStatus('🔄 加入1v1通话房间...', '#888');
+
+            // 读取用户选择的编解码配置，发送给服务端
+            const userCodecConfig = getSelectedConfig();
             ws.send(JSON.stringify({
                 type: 'join',
                 roomId: CONFIG.roomId,
-                peerId: null
+                peerId: null,
+                codecConfig: userCodecConfig
             }));
 
             document.getElementById('joinBtn').disabled = true;
             document.getElementById('joinBtn').textContent = '✅ 已加入';
             document.getElementById('leaveBtn').disabled = false;
+
+            // 锁定配置面板（通话中不可修改）
+            enableConfigUI(false);
 
             startStatsUpdater();
 
@@ -448,6 +468,11 @@ const VOICE_APP = (() => {
         document.getElementById('joinBtn').textContent = '📞 加入通话';
         document.getElementById('leaveBtn').disabled = true;
         document.getElementById('peersList').innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
+
+        // 隐藏房间配置信息
+        if (roomConfigInfoEl) roomConfigInfoEl.style.display = 'none';
+        // 恢复配置面板显示（下次加入时可重新选择）
+        if (configSectionEl) configSectionEl.style.display = 'block';
     }
 
     // =============================================
@@ -523,6 +548,9 @@ const VOICE_APP = (() => {
         roomPeers.clear();
         updateRoomStatus();
         updatePeerInfoSection();
+
+        // 恢复配置面板可编辑状态
+        enableConfigUI(true);
     }
 
     // =============================================
@@ -612,8 +640,93 @@ const VOICE_APP = (() => {
             <span>👥 房间: ${roomPeers.size + (myPeerId ? 1 : 0)} 人</span><br>
             <span>📤 发送: ${stats.packetsSent} 包 | ${bitrateSend}kbps</span><br>
             <span>📥 接收: ${stats.packetsRecv} 包</span><br>
-            <span>📊 编码: Opus 32kbps | ${CONFIG.frameDuration * 1000}ms/帧</span>
+            <span>📊 编码: Opus ${CONFIG.opusBitrate/1000}kbps | ${CONFIG.frameDuration * 1000}ms/帧 | ${CONFIG.sampleRate/1000}kHz</span>
         `;
+    }
+
+    // =============================================
+    // 编解码配置预设
+    // =============================================
+    const PRESETS = {
+        'low-latency': { sampleRate: 48000, bitrate: 64000, frameDuration: 0.02, jitter: 2 },
+        'balanced':    { sampleRate: 48000, bitrate: 32000, frameDuration: 0.04, jitter: 4 },
+        'high-quality':{ sampleRate: 48000, bitrate: 64000, frameDuration: 0.04, jitter: 2 },
+        'weak-network':{ sampleRate: 16000, bitrate: 16000, frameDuration: 0.06, jitter: 8 }
+    };
+
+    function applyPreset(name) {
+        const preset = PRESETS[name];
+        if (!preset) return;
+
+        configSampleRateEl.value = preset.sampleRate;
+        configBitrateEl.value = preset.bitrate;
+        configFrameDurationEl.value = preset.frameDuration;
+        configJitterEl.value = preset.jitter;
+
+        // 高亮当前预设按钮
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector(`.preset-btn[data-preset="${name}"]`)?.classList.add('active');
+
+        console.log('[Config] Applied preset:', name, preset);
+    }
+
+    // =============================================
+    // 获取当前UI配置
+    // =============================================
+    function getSelectedConfig() {
+        return {
+            sampleRate: parseInt(configSampleRateEl.value),
+            opusBitrate: parseInt(configBitrateEl.value),
+            frameDuration: parseFloat(configFrameDurationEl.value),
+            jitterBufferFrames: parseInt(configJitterEl.value)
+        };
+    }
+
+    // =============================================
+    // 应用服务端下发的房间配置
+    // =============================================
+    function applyRoomConfig(codecConfig) {
+        if (!codecConfig) return;
+
+        // 更新 CONFIG
+        if (codecConfig.sampleRate) CONFIG.sampleRate = codecConfig.sampleRate;
+        if (codecConfig.opusBitrate) CONFIG.opusBitrate = codecConfig.opusBitrate;
+        if (codecConfig.frameDuration) CONFIG.frameDuration = codecConfig.frameDuration;
+        if (codecConfig.jitterBufferFrames) CONFIG.jitterBufferFrames = codecConfig.jitterBufferFrames;
+
+        // 显示房间配置信息
+        if (roomConfigInfoEl && roomConfigDetailsEl) {
+            roomConfigInfoEl.style.display = 'block';
+            roomConfigDetailsEl.innerHTML = `
+                <div class="room-config-detail">
+                    <span class="label">采样率</span>
+                    <span class="value">${codecConfig.sampleRate / 1000} kHz</span>
+                </div>
+                <div class="room-config-detail">
+                    <span class="label">比特率</span>
+                    <span class="value">${codecConfig.opusBitrate / 1000} kbps</span>
+                </div>
+                <div class="room-config-detail">
+                    <span class="label">帧长</span>
+                    <span class="value">${(codecConfig.frameDuration * 1000).toFixed(0)} ms</span>
+                </div>
+                <div class="room-config-detail">
+                    <span class="label">抖动缓冲</span>
+                    <span class="value">${codecConfig.jitterBufferFrames} 帧 (${(codecConfig.jitterBufferFrames * codecConfig.frameDuration * 1000).toFixed(0)}ms)</span>
+                </div>
+            `;
+        }
+
+        console.log('[Config] Applied room config:', codecConfig);
+    }
+
+    // =============================================
+    // 配置面板启用/禁用
+    // =============================================
+    function enableConfigUI(enabled) {
+        const selects = [configSampleRateEl, configBitrateEl, configFrameDurationEl, configJitterEl];
+        selects.forEach(el => { if (el) el.disabled = !enabled; });
+        document.querySelectorAll('.preset-btn').forEach(b => { b.disabled = !enabled; });
     }
 
     // =============================================
@@ -627,9 +740,21 @@ const VOICE_APP = (() => {
         peerPeerIdEl = document.getElementById('peerPeerId');
         peerInfoSectionEl = document.getElementById('peerInfoSection');
         roomIdDisplayEl = document.getElementById('roomIdDisplay');
+        configSectionEl = document.getElementById('configSection');
+        roomConfigInfoEl = document.getElementById('roomConfigInfo');
+        roomConfigDetailsEl = document.getElementById('roomConfigDetails');
+        configSampleRateEl = document.getElementById('configSampleRate');
+        configBitrateEl = document.getElementById('configBitrate');
+        configFrameDurationEl = document.getElementById('configFrameDuration');
+        configJitterEl = document.getElementById('configJitter');
 
         document.getElementById('joinBtn').onclick = joinRoom;
         document.getElementById('leaveBtn').onclick = leaveRoom;
+
+        // 预设模式按钮
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+        });
 
         // 显示当前房间ID
         if (roomIdDisplayEl) {

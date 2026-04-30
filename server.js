@@ -151,9 +151,19 @@ const wss = new WebSocket.Server({
 });
 
 // =============================================
+// 默认编解码配置
+// =============================================
+const DEFAULT_CODEC_CONFIG = {
+    sampleRate: 48000,
+    frameDuration: 0.04,
+    opusBitrate: 32000,
+    jitterBufferFrames: 4
+};
+
+// =============================================
 // 房间状态
 // =============================================
-const rooms = new Map();   // roomId -> { peers: Set<peerId>, timer: timeoutId }
+const rooms = new Map();   // roomId -> { peers: Set<peerId>, timer: timeoutId, codecConfig: {} }
 const peers = new Map();   // peerId -> { ws, roomId }
 
 // =============================================
@@ -267,9 +277,12 @@ function handleJoin(ws, msg, oldPeerId, oldRoomId) {
     // 确保 peerId 在房间内唯一
     const finalPeerId = ensureUniquePeerId(newRoomId, newPeerId);
 
-    // 创建房间（如果不存在）
+    // 创建房间（如果不存在），使用发起方的编解码配置
     if (!rooms.has(newRoomId)) {
-        rooms.set(newRoomId, { peers: new Set(), timer: null });
+        const userConfig = msg.codecConfig || {};
+        const roomConfig = { ...DEFAULT_CODEC_CONFIG, ...userConfig };
+        rooms.set(newRoomId, { peers: new Set(), timer: null, codecConfig: roomConfig });
+        console.log(`[CONFIG] Room "${newRoomId}" codec config:`, roomConfig);
     }
 
     const room = rooms.get(newRoomId);
@@ -293,12 +306,13 @@ function handleJoin(ws, msg, oldPeerId, oldRoomId) {
     // 获取房间内其他 peer 列表
     const existingPeers = Array.from(room.peers).filter(id => id !== finalPeerId);
 
-    // 回复加入成功
+    // 回复加入成功（携带房间编解码配置）
     ws.send(JSON.stringify({
         type: 'joined',
         peerId: finalPeerId,
         roomId: newRoomId,
-        peers: existingPeers
+        peers: existingPeers,
+        codecConfig: room.codecConfig
     }));
 
     // 通知房间内其他 peer
@@ -431,6 +445,7 @@ server.listen(PORT, () => {
     console.log(`  WS:     ws://localhost:${PORT}`);
     console.log(`  Max Rooms: ${MAX_ROOMS}`);
     console.log(`  Room Idle Timeout: ${ENV.ROOM_IDLE_TIMEOUT}s`);
+    console.log(`  Default Codec: Opus ${DEFAULT_CODEC_CONFIG.opusBitrate/1000}kbps @ ${DEFAULT_CODEC_CONFIG.sampleRate/1000}kHz`);
     console.log('═══════════════════════════════════════════');
     console.log('[READY] Multi-room WebCodecs Opus relay running');
 });
