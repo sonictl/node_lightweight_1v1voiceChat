@@ -375,6 +375,7 @@ const VOICE_APP = (() => {
 
             document.getElementById('joinBtn').disabled = true;
             document.getElementById('joinBtn').textContent = '✅ 已加入';
+            document.getElementById('leaveBtn').disabled = false;
 
             startStatsUpdater();
 
@@ -398,6 +399,7 @@ const VOICE_APP = (() => {
         setStatus('⚡ 已离开房间', '#d4d4d4');
         document.getElementById('joinBtn').disabled = false;
         document.getElementById('joinBtn').textContent = '📞 加入语音会议室';
+        document.getElementById('leaveBtn').disabled = true;
         roomPeers.clear();
         document.getElementById('peersList').innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
     }
