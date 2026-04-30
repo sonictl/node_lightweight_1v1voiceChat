@@ -272,9 +272,9 @@ setInterval(() => {
 // =============================================
 server.listen(PORT, () => {
     console.log('═══════════════════════════════════════════');
-    console.log('  WebSocket + Opus(WASM) Voice Relay');
+    console.log('  WebSocket + WebCodecs Voice Relay');
     console.log(`  Server: http://localhost:${PORT}`);
     console.log(`  WS:     ws://localhost:${PORT}`);
     console.log('═══════════════════════════════════════════');
-    console.log('[READY] Minimal latency relay running');
+    console.log('[READY] WebCodecs Opus relay running');
 });

@@ -537,6 +537,7 @@ const VOICE_APP = (() => {
         const chunk = new EncodedAudioChunk({
             type: 'key', // Opus 每帧都是关键帧
             timestamp: timestamp * 1000, // 转换为微秒
+            duration: CONFIG.frameDuration * 1_000_000, // 微秒
             data: opusData
         });
 
