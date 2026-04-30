@@ -64,11 +64,11 @@ const VOICE_APP = (() => {
         const peerCount = roomPeers.size + (isJoined ? 1 : 0);
 
         if (!isJoined) {
-            roomStatusEl.innerHTML = '<span class="room-status waiting">☎️ 未加入...</span>';
+            roomStatusEl.innerHTML = '<span class="room-status waiting">☎️ 未加入通话...</span>';
         } else if (peerCount === 1) {
             roomStatusEl.innerHTML = '<span class="room-status waiting">⏳ 等待对方加入...</span>';
         } else if (peerCount === 2) {
-            roomStatusEl.innerHTML = '<span class="room-status active">🟢 通话中 (1v1)</span>';
+            roomStatusEl.innerHTML = '<span class="room-status active">🟢 1v1通话中...</span>';
         }
     }
 
