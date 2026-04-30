@@ -467,7 +467,10 @@ const VOICE_APP = (() => {
         document.getElementById('joinBtn').disabled = false;
         document.getElementById('joinBtn').textContent = '📞 加入通话';
         document.getElementById('leaveBtn').disabled = true;
-        document.getElementById('peersList').innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
+        const peersListEl2 = document.getElementById('peersList');
+        if (peersListEl2) {
+            peersListEl2.innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
+        }
 
         // 隐藏房间配置信息
         if (roomConfigInfoEl) roomConfigInfoEl.style.display = 'none';
