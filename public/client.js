@@ -62,7 +62,7 @@ const VOICE_APP = (() => {
         const peerCount = roomPeers.size + (isJoined ? 1 : 0);
 
         if (!isJoined) {
-            roomStatusEl.innerHTML = '<span class="room-status waiting">⏳ 等待加入...</span>';
+            roomStatusEl.innerHTML = '<span class="room-status waiting">☎️ 未加入...</span>';
         } else if (peerCount === 1) {
             roomStatusEl.innerHTML = '<span class="room-status waiting">⏳ 等待对方加入...</span>';
         } else if (peerCount === 2) {
@@ -447,10 +447,7 @@ const VOICE_APP = (() => {
         document.getElementById('joinBtn').disabled = false;
         document.getElementById('joinBtn').textContent = '📞 加入通话';
         document.getElementById('leaveBtn').disabled = true;
-        roomPeers.clear();
         document.getElementById('peersList').innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
-        updatePeerInfoSection();
-        updateRoomStatus();
     }
 
     // =============================================
@@ -521,6 +518,11 @@ const VOICE_APP = (() => {
             bytesSent: 0, bytesRecv: 0,
             lastSeqReceived: new Map()
         };
+
+        // 清理后统一更新 UI 状态
+        roomPeers.clear();
+        updateRoomStatus();
+        updatePeerInfoSection();
     }
 
     // =============================================
