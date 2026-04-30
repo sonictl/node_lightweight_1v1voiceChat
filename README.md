@@ -1,6 +1,6 @@
-# node_lightweight_webVoiceChat
+# a light weight 1v1voiceChat node web application
 
-A Node.js implemented web voice chat app. Tech: WebSocket + WebCodecs (AudioEncoder/AudioDecoder) + AudioWorklet.
+A Node.js implemented 1v1 web voice chat app. Tech: WebSocket + WebCodecs (AudioEncoder/AudioDecoder) + AudioWorklet.
 
 ## Quick Start
 

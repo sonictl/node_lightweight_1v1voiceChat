@@ -188,7 +188,7 @@ function scheduleRoomCleanup(roomId) {
             const r = rooms.get(roomId);
             if (r.peers.size === 0) {
                 rooms.delete(roomId);
-                console.log(`[ROOM] Room "${roomId}" auto-destroyed after ${ENV.ROOM_IDLE_TIMEOUT}s idle timeout`);
+                console.log(`[ROOM] Room "${roomId}" auto-destroyed after ${ENV.ROOM_IDLE_TIMEOUT} seconds idle timeout`);
             }
         }
     }, ROOM_IDLE_TIMEOUT_MS);
