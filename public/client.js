@@ -9,9 +9,11 @@ const VOICE_APP = (() => {
     // =============================================
     // 配置
     // =============================================
+    // 从 URL 路径获取房间 ID（由服务端注入到 window.__ROOM_ID__）
+    const ROOM_ID = window.__ROOM_ID__ || 'default';
     const CONFIG = {
         serverUrl: `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`,
-        roomId: 'default',
+        roomId: ROOM_ID,
         sampleRate: 48000,       // 48kHz 足够语音
         frameDuration: 0.04,     // 40ms 帧长
         opusBitrate: 32000,      // 32kbps 语音最优
@@ -50,7 +52,7 @@ const VOICE_APP = (() => {
     let isJoined = false;
 
     // UI 元素
-    let statusEl, peersListEl, debugInfoEl, myPeerIdEl, roomStatusEl, peerPeerIdEl, peerInfoSectionEl;
+    let statusEl, peersListEl, debugInfoEl, myPeerIdEl, roomStatusEl, peerPeerIdEl, peerInfoSectionEl, roomIdDisplayEl;
 
     // =============================================
     // 房间状态管理
@@ -622,13 +624,19 @@ const VOICE_APP = (() => {
         roomStatusEl = document.getElementById('roomStatus');
         peerPeerIdEl = document.getElementById('peerPeerId');
         peerInfoSectionEl = document.getElementById('peerInfoSection');
+        roomIdDisplayEl = document.getElementById('roomIdDisplay');
 
         document.getElementById('joinBtn').onclick = joinRoom;
         document.getElementById('leaveBtn').onclick = leaveRoom;
 
+        // 显示当前房间ID
+        if (roomIdDisplayEl) {
+            roomIdDisplayEl.textContent = CONFIG.roomId;
+        }
+
         updateRoomStatus();
 
-        console.log('[VoiceApp] Ready - WebSocket + WebCodecs');
+        console.log(`[VoiceApp] Ready - Room: ${CONFIG.roomId}, WebSocket + WebCodecs`);
         setStatus('⚡ 点击下方按钮加入语音通话', '#d4d4d4');
     }
 

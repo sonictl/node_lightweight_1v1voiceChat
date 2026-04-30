@@ -67,6 +67,23 @@
             font-weight: bold;
             font-family: monospace;
         }
+        .room-id-info {
+            background: #1e1e1e;
+            padding: 12px 14px;
+            margin: 10px 0;
+            border-left: 3px solid #ffa500;
+            font-size: 13px;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .room-id-info .room-id-value {
+            color: #ffa500;
+            font-size: 18px;
+            font-weight: bold;
+            font-family: monospace;
+        }
         .status {
             background: #1e1e1e;
             padding: 14px;
