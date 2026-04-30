@@ -25,7 +25,7 @@ class VoiceWorklet extends AudioWorkletProcessor {
         this._frameSeq = 0;
 
         // 监听主线程消息
-        this.port.on('message', this._onMessage.bind(this));
+        this.port.onmessage = (event) => this._onMessage(event);
 
         console.log(`[VoiceWorklet] Init: ${sampleRate}Hz, ${this._frameSamples}samples/frame`);
     }
