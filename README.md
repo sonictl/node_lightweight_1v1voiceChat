@@ -9,13 +9,25 @@ npm install
 npm start
 ```
 
-Open `http://localhost:4001` in two browser tabs (or two devices on the same network).
+Open `http://localhost:4001` — auto-redirects to a random room. Share the URL to invite others.
 
 ## Usage
 
-1. **Open the page** — you'll see your Peer ID
-2. **Click "📞 加入语音会议室"** — audio is encoded with Opus @ 32kbps via WebCodecs, relayed via WebSocket, decoded and played in real-time
-3. **Click "🔴 离开"** to end the call
+1. **Open the page** — auto-assigned to a room (e.g. `/a3xk`)
+2. **Choose codec preset** (optional) — 🚀 Low Latency / ⚖️ Balanced / 🎵 High Quality / 📡 Weak Network
+3. **Click "📞 加入通话"** — audio encoded with Opus, relayed via WebSocket, decoded in real-time
+4. **Click "❌ 退出通话"** to end the call
+
+> **Note**: First joiner decides the codec config. Late joiners auto-sync and see config read-only.
+
+## Features
+
+- **URL path = Room ID** — `http://localhost:4001/room1` → room "room1"
+- **Auto room redirect** — `/` generates a random 4-char room ID
+- **Max rooms limit** — configurable via `.env` (`MAX_ROOMS=10`)
+- **Room idle timeout** — auto-destroy empty rooms (`ROOM_IDLE_TIMEOUT=300s`)
+- **Codec config sync** — first joiner's config synced to late joiners via server
+- **1v1 only** — each room supports exactly 2 peers
 
 ## How It Works
 
@@ -23,67 +35,58 @@ Open `http://localhost:4001` in two browser tabs (or two devices on the same net
 Microphone → AudioWorklet (PCM capture) → AudioEncoder (Opus) → WebSocket Relay → AudioDecoder (Opus) → AudioWorklet (Ring Buffer) → Speaker
 ```
 
-- **Capture**: `AudioWorkletProcessor` captures microphone PCM in 40ms frames
-- **Encoder**: `AudioEncoder` (WebCodecs) encodes PCM → Opus @ 32kbps
+- **Capture**: `AudioWorkletProcessor` captures microphone PCM in configurable frames
+- **Encoder**: `AudioEncoder` (WebCodecs) encodes PCM → Opus
 - **Network**: 8-byte header (sampleRate + seq + timestamp) + Opus payload over WebSocket
 - **Decoder**: `AudioDecoder` (WebCodecs) decodes Opus → PCM Float32
 - **Playback**: Ring buffer in AudioWorklet with underrun protection
-- **Server**: Zero-copy relay, room-based broadcasting
-
-## Architecture
-
-### Files
-
-| File | Description |
-|------|-------------|
-| `server.js` | HTTP + WebSocket relay server |
-| `public/index.html` | UI |
-| `public/client.js` | Main client: WebSocket, WebCodecs, AudioWorklet management |
-| `public/opus-codec.js` | Standalone Opus codec module (WebCodecs-based, zero WASM dependency) |
-| `public/audio-worklet.js` | AudioWorkletProcessor for PCM capture & playback |
-
-### Codec Module (`opus-codec.js`)
-
-The `OPUS_CODEC` module provides a standalone Opus codec based on WebCodecs API:
-
-```javascript
-// Encoder
-const encoder = new OPUS_CODEC.OpusEncoder(48000, 1, OPUS_CODEC.APPLICATION_VOIP);
-await encoder.init();
-const opusData = await encoder.encode(pcmFrames);  // Float32Array → Uint8Array
-
-// Decoder
-const decoder = new OPUS_CODEC.OpusDecoder(48000, 1);
-await decoder.init();
-const pcmData = await decoder.decode(opusData);    // Uint8Array → Float32Array
-```
+- **Server**: Zero-copy relay, room-based broadcasting, idle timeout cleanup
 
 ## Configuration
 
-Edit `CONFIG` in `public/client.js`:
+### `.env` (server)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| sampleRate | 48000 | Audio sample rate (Hz) |
-| frameDuration | 0.04 | Frame duration (seconds) |
-| opusBitrate | 32000 | Opus bitrate (bps) |
-| jitterBufferFrames | 4 | Ring buffer size (frames) |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 4001 | Server port |
+| `MAX_ROOMS` | 10 | Maximum concurrent rooms |
+| `ROOM_IDLE_TIMEOUT` | 300 | Room auto-destroy timeout (seconds) |
+
+### Codec Presets (client UI)
+
+| Preset | Sample Rate | Bitrate | Frame | Jitter |
+|--------|:-----------:|:-------:|:-----:|:------:|
+| 🚀 Low Latency | 48 kHz | 64 kbps | 20 ms | 2 frames |
+| ⚖️ Balanced | 48 kHz | 32 kbps | 40 ms | 4 frames |
+| 🎵 High Quality | 48 kHz | 64 kbps | 40 ms | 2 frames |
+| 📡 Weak Network | 16 kHz | 16 kbps | 60 ms | 8 frames |
+
+## Files
+
+| File | Description |
+|------|-------------|
+| `server.js` | HTTP + WebSocket relay server with multi-room support |
+| `public/index.html` | UI with codec config panel |
+| `public/client.js` | Main client: WebSocket, WebCodecs, AudioWorklet, config sync |
+| `public/opus-codec.js` | Standalone Opus codec module (WebCodecs-based) |
+| `public/audio-worklet.js` | AudioWorkletProcessor for PCM capture & playback |
+| `public/style.css` | Dark theme UI styles |
+| `.env` | Server configuration |
 
 ## Tech Specs
 
-- **Audio**: 48kHz mono, Opus @ 32kbps, 40ms frames
-- **Bandwidth**: ~4 KB/s per direction
-- **Latency**: ~160ms jitter buffer + network RTT
+- **Audio**: Mono, Opus, configurable sample rate & bitrate
+- **Bandwidth**: ~4 KB/s per direction (balanced preset)
+- **Latency**: ~160ms jitter buffer + network RTT (balanced preset)
 - **Dependencies**: `ws` (server), `uuid` (server)
-- **Browser**: Chrome 86+ / Edge 86+ / Firefox 100+ (WebCodecs support required)
+- **Browser**: Chrome 86+ / Edge 86+ (WebCodecs required)
 
 ## Browser Support
 
 WebCodecs API is supported in:
 - Chrome 86+
 - Edge 86+
-- Firefox 100+ (behind flag)
 - Opera 72+
 - Samsung Internet 15+
 
-> **Note**: This project uses browser-native `AudioEncoder`/`AudioDecoder` APIs. No WASM binaries or external codec libraries are required.
+> **Note**: Uses browser-native `AudioEncoder`/`AudioDecoder`. No WASM binaries or external codec libraries required.
