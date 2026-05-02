@@ -1,23 +1,24 @@
 // =============================================
 // WebSocket + WebCodecs 语音客户端
 // 浏览器原生编解码 · 零依赖 · 超低延迟
+// 固定弱网参数：8kHz · 16kbps · 60ms帧长 · 8帧抖动缓冲
 // =============================================
 
 const VOICE_APP = (() => {
     'use strict';
 
     // =============================================
-    // 配置
+    // 固定弱网编解码配置（不可修改）
     // =============================================
     // 从 URL 路径获取房间 ID（由服务端注入到 window.__ROOM_ID__）
     const ROOM_ID = window.__ROOM_ID__ || 'default';
     const CONFIG = {
         serverUrl: `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`,
         roomId: ROOM_ID,
-        sampleRate: 48000,       // 48kHz 足够语音
-        frameDuration: 0.04,     // 40ms 帧长
-        opusBitrate: 32000,      // 32kbps 语音最优
-        jitterBufferFrames: 4    // 4 帧抖动缓冲 (~160ms)
+        sampleRate: 8000,          // 8kHz 电话质量，弱网友好
+        frameDuration: 0.06,       // 60ms 帧长，减少包数
+        opusBitrate: 16000,        // 16kbps 低比特率
+        jitterBufferFrames: 8      // 8 帧抖动缓冲 (~480ms)
     };
 
     // =============================================
@@ -40,7 +41,6 @@ const VOICE_APP = (() => {
 
     // 重采样相关
     const AUDIO_CTX_SAMPLE_RATE = 48000; // AudioContext 固定采样率
-    let resampleBuffer = [];              // 降采样累积缓冲
 
     // 丢包统计
     let stats = {
@@ -57,8 +57,6 @@ const VOICE_APP = (() => {
 
     // UI 元素
     let statusEl, peersListEl, debugInfoEl, myPeerIdEl, roomStatusEl, peerPeerIdEl, peerInfoSectionEl, roomIdDisplayEl;
-    let configSectionEl, roomConfigInfoEl, roomConfigDetailsEl;
-    let configSampleRateEl, configBitrateEl, configFrameDurationEl, configJitterEl;
 
     // 讲话检测
     const SPEAKING_THRESHOLD = 0.015;  // RMS 阈值，超过认为在说话
@@ -144,16 +142,6 @@ const VOICE_APP = (() => {
                 myPeerIdEl.textContent = myPeerId;
                 isJoined = true;
                 setStatus(`🎙️ 已加入1v1通话房间 (${msg.roomId})`, '#4caf50');
-
-                // 应用服务端下发的编解码配置
-                if (msg.codecConfig) {
-                    applyRoomConfig(msg.codecConfig);
-                }
-
-                // 如果房间已有其他成员，说明配置已由先加入者决定，隐藏配置面板
-                if (msg.peers && msg.peers.length > 0 && configSectionEl) {
-                    configSectionEl.style.display = 'none';
-                }
 
                 if (msg.peers && msg.peers.length > 0) {
                     msg.peers.forEach(pid => addPeer(pid));
@@ -308,7 +296,7 @@ const VOICE_APP = (() => {
         if (audioCtx) return;
 
         // AudioContext 始终使用 48kHz（硬件原生采样率），
-        // 编解码器使用用户配置的采样率（CONFIG.sampleRate）
+        // 编解码器使用 8kHz（固定弱网参数）
         audioCtx = new AudioContext({
             sampleRate: 48000,
             latencyHint: 'interactive'
@@ -320,7 +308,7 @@ const VOICE_APP = (() => {
         // 创建 Worklet 节点
         workletNode = new AudioWorkletNode(audioCtx, 'voice-worklet');
 
-        // 通知 Worklet 当前帧参数（使用已更新的 CONFIG）
+        // 通知 Worklet 当前帧参数
         workletNode.port.postMessage({
             type: 'config',
             frameDuration: CONFIG.frameDuration
@@ -334,7 +322,7 @@ const VOICE_APP = (() => {
                 // 收到麦克风 PCM → 编码 → 发送
                 if (!encoder || encoder.state !== 'configured') return;
 
-                // Worklet 以 48kHz 采集，如果编解码器采样率不同，需要降采样
+                // Worklet 以 48kHz 采集，编解码器使用 8kHz，需要降采样
                 let pcmData = data.data;
                 if (CONFIG.sampleRate !== AUDIO_CTX_SAMPLE_RATE) {
                     pcmData = downsample(pcmData, AUDIO_CTX_SAMPLE_RATE, CONFIG.sampleRate);
@@ -504,13 +492,6 @@ const VOICE_APP = (() => {
         isInitializing = true;
 
         try {
-            // 先读取用户选择的编解码配置，更新 CONFIG
-            const userCodecConfig = getSelectedConfig();
-            CONFIG.sampleRate = userCodecConfig.sampleRate;
-            CONFIG.opusBitrate = userCodecConfig.opusBitrate;
-            CONFIG.frameDuration = userCodecConfig.frameDuration;
-            CONFIG.jitterBufferFrames = userCodecConfig.jitterBufferFrames;
-
             setStatus('🔄 初始化 WebCodecs 编解码器...', '#888');
             await initCodec();
 
@@ -525,20 +506,22 @@ const VOICE_APP = (() => {
 
             setStatus('🔄 加入1v1通话房间...', '#888');
 
-            // 发送用户选择的编解码配置给服务端
+            // 发送加入请求（使用固定弱网配置）
             ws.send(JSON.stringify({
                 type: 'join',
                 roomId: CONFIG.roomId,
                 peerId: null,
-                codecConfig: userCodecConfig
+                codecConfig: {
+                    sampleRate: CONFIG.sampleRate,
+                    opusBitrate: CONFIG.opusBitrate,
+                    frameDuration: CONFIG.frameDuration,
+                    jitterBufferFrames: CONFIG.jitterBufferFrames
+                }
             }));
 
             document.getElementById('joinBtn').disabled = true;
             document.getElementById('joinBtn').textContent = '✅ 已加入';
             document.getElementById('leaveBtn').disabled = false;
-
-            // 锁定配置面板（通话中不可修改）
-            enableConfigUI(false);
 
             startStatsUpdater();
 
@@ -567,11 +550,6 @@ const VOICE_APP = (() => {
         if (peersListEl2) {
             peersListEl2.innerHTML = '<span style="color:#666; font-size:13px;">暂无其他成员</span>';
         }
-
-        // 隐藏房间配置信息
-        if (roomConfigInfoEl) roomConfigInfoEl.style.display = 'none';
-        // 恢复配置面板显示（下次加入时可重新选择）
-        if (configSectionEl) configSectionEl.style.display = 'block';
     }
 
     // =============================================
@@ -647,9 +625,6 @@ const VOICE_APP = (() => {
         roomPeers.clear();
         updateRoomStatus();
         updatePeerInfoSection();
-
-        // 恢复配置面板可编辑状态
-        enableConfigUI(true);
     }
 
     // =============================================
@@ -744,84 +719,6 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
-    // 编解码配置预设
-    // =============================================
-    const PRESETS = {
-        // 低延迟：16kHz 宽带语音 + 64kbps + 20ms 超短帧长，低延迟优先
-        'low-latency': { sampleRate: 16000, bitrate: 64000, frameDuration: 0.02, jitter: 2 },
-        'balanced':    { sampleRate: 24000, bitrate: 32000, frameDuration: 0.04, jitter: 4 },
-        'high-quality':{ sampleRate: 48000, bitrate: 64000, frameDuration: 0.04, jitter: 2 },
-        // 弱网模式：8kHz 电话质量 + 16kbps + 60ms 帧长 + 大抖动缓冲，弱网下保持可沟通
-        'weak-network':{ sampleRate: 8000, bitrate: 16000, frameDuration: 0.06, jitter: 8 }
-    };
-
-    function applyPreset(name) {
-        const preset = PRESETS[name];
-        if (!preset) return;
-
-        configSampleRateEl.value = preset.sampleRate;
-        configBitrateEl.value = preset.bitrate;
-        configFrameDurationEl.value = preset.frameDuration;
-        configJitterEl.value = preset.jitter;
-
-        // 高亮当前预设按钮
-        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-        document.querySelector(`.preset-btn[data-preset="${name}"]`)?.classList.add('active');
-
-        console.log('[Config] Applied preset:', name, preset);
-    }
-
-    // =============================================
-    // 获取当前UI配置
-    // =============================================
-    function getSelectedConfig() {
-        return {
-            sampleRate: parseInt(configSampleRateEl.value),
-            opusBitrate: parseInt(configBitrateEl.value),
-            frameDuration: parseFloat(configFrameDurationEl.value),
-            jitterBufferFrames: parseInt(configJitterEl.value)
-        };
-    }
-
-    // =============================================
-    // 应用服务端下发的房间配置
-    // =============================================
-    function applyRoomConfig(codecConfig) {
-        if (!codecConfig) return;
-
-        // 更新 CONFIG
-        if (codecConfig.sampleRate) CONFIG.sampleRate = codecConfig.sampleRate;
-        if (codecConfig.opusBitrate) CONFIG.opusBitrate = codecConfig.opusBitrate;
-        if (codecConfig.frameDuration) CONFIG.frameDuration = codecConfig.frameDuration;
-        if (codecConfig.jitterBufferFrames) CONFIG.jitterBufferFrames = codecConfig.jitterBufferFrames;
-
-        // 显示房间配置信息
-        if (roomConfigInfoEl && roomConfigDetailsEl) {
-            roomConfigInfoEl.style.display = 'block';
-            roomConfigDetailsEl.innerHTML = `
-                <div class="room-config-detail">
-                    <span class="label">采样率</span>
-                    <span class="value">${codecConfig.sampleRate / 1000} kHz</span>
-                </div>
-                <div class="room-config-detail">
-                    <span class="label">比特率</span>
-                    <span class="value">${codecConfig.opusBitrate / 1000} kbps</span>
-                </div>
-                <div class="room-config-detail">
-                    <span class="label">帧长</span>
-                    <span class="value">${(codecConfig.frameDuration * 1000).toFixed(0)} ms</span>
-                </div>
-                <div class="room-config-detail">
-                    <span class="label">抖动缓冲</span>
-                    <span class="value">${codecConfig.jitterBufferFrames} 帧 (${(codecConfig.jitterBufferFrames * codecConfig.frameDuration * 1000).toFixed(0)}ms)</span>
-                </div>
-            `;
-        }
-
-        console.log('[Config] Applied room config:', codecConfig);
-    }
-
-    // =============================================
     // 讲话检测
     // =============================================
     function updatePeerSpeaking(speaking) {
@@ -846,15 +743,6 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
-    // 配置面板启用/禁用
-    // =============================================
-    function enableConfigUI(enabled) {
-        const selects = [configSampleRateEl, configBitrateEl, configFrameDurationEl, configJitterEl];
-        selects.forEach(el => { if (el) el.disabled = !enabled; });
-        document.querySelectorAll('.preset-btn').forEach(b => { b.disabled = !enabled; });
-    }
-
-    // =============================================
     // 初始化
     // =============================================
     function init() {
@@ -865,13 +753,6 @@ const VOICE_APP = (() => {
         peerPeerIdEl = document.getElementById('peerPeerId');
         peerInfoSectionEl = document.getElementById('peerInfoSection');
         roomIdDisplayEl = document.getElementById('roomIdDisplay');
-        configSectionEl = document.getElementById('configSection');
-        roomConfigInfoEl = document.getElementById('roomConfigInfo');
-        roomConfigDetailsEl = document.getElementById('roomConfigDetails');
-        configSampleRateEl = document.getElementById('configSampleRate');
-        configBitrateEl = document.getElementById('configBitrate');
-        configFrameDurationEl = document.getElementById('configFrameDuration');
-        configJitterEl = document.getElementById('configJitter');
 
         // 讲话指示器元素
         peerSpeakingEl = document.getElementById('peerSpeakingIndicator');
@@ -879,11 +760,6 @@ const VOICE_APP = (() => {
 
         document.getElementById('joinBtn').onclick = joinRoom;
         document.getElementById('leaveBtn').onclick = leaveRoom;
-
-        // 预设模式按钮
-        document.querySelectorAll('.preset-btn').forEach(btn => {
-            btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
-        });
 
         // 显示当前房间ID
         if (roomIdDisplayEl) {
@@ -893,6 +769,7 @@ const VOICE_APP = (() => {
         updateRoomStatus();
 
         console.log(`[VoiceApp] Ready - Room: ${CONFIG.roomId}, WebSocket + WebCodecs`);
+        console.log(`[VoiceApp] Fixed weak-network config: ${CONFIG.sampleRate/1000}kHz, ${CONFIG.opusBitrate/1000}kbps, ${CONFIG.frameDuration*1000}ms/frame`);
         setStatus('⚡ 点击下方按钮加入语音通话', '#d4d4d4');
     }
 

@@ -151,13 +151,13 @@ const wss = new WebSocket.Server({
 });
 
 // =============================================
-// 默认编解码配置
+// 默认编解码配置（固定弱网参数）
 // =============================================
 const DEFAULT_CODEC_CONFIG = {
-    sampleRate: 48000,
-    frameDuration: 0.04,
-    opusBitrate: 32000,
-    jitterBufferFrames: 4
+    sampleRate: 8000,
+    frameDuration: 0.06,
+    opusBitrate: 16000,
+    jitterBufferFrames: 8
 };
 
 // =============================================
