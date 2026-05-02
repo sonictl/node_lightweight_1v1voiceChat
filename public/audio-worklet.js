@@ -10,7 +10,7 @@ class VoiceWorklet extends AudioWorkletProcessor {
 
         // ---- 捕获端参数 ----
         this._sampleRate = sampleRate; // AudioContext 的采样率
-        this._frameDuration = 0.04;    // 40ms 帧长
+        this._frameDuration = 0.04;    // 40ms 帧长（默认，可通过消息更新）
         this._frameSamples = Math.floor(sampleRate * this._frameDuration);
         this._captureBuffer = [];
 
@@ -49,6 +49,21 @@ class VoiceWorklet extends AudioWorkletProcessor {
             // 标记有数据了
             if (this._underrun && this._getBufferedSamples() >= this._frameSamples) {
                 this._underrun = false;
+            }
+        }
+
+        if (data.type === 'config') {
+            // 更新帧参数（采样率不变，帧长可变）
+            if (data.frameDuration) {
+                this._frameDuration = data.frameDuration;
+                this._frameSamples = Math.floor(this._sampleRate * this._frameDuration);
+                // 重新分配环形缓冲区（8 帧容量）
+                this._ringBuffer = new Float32Array(this._frameSamples * 8);
+                this._ringWrite = 0;
+                this._ringRead = 0;
+                this._ringSize = this._ringBuffer.length;
+                this._underrun = true;
+                console.log(`[VoiceWorklet] Config updated: frameDuration=${this._frameDuration}s, frameSamples=${this._frameSamples}, ringSize=${this._ringSize}`);
             }
         }
 

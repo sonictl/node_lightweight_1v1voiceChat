@@ -38,6 +38,10 @@ const VOICE_APP = (() => {
 
     let gainNode = null;
 
+    // 重采样相关
+    const AUDIO_CTX_SAMPLE_RATE = 48000; // AudioContext 固定采样率
+    let resampleBuffer = [];              // 降采样累积缓冲
+
     // 丢包统计
     let stats = {
         packetsSent: 0,
@@ -181,6 +185,54 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
+    // PCM 重采样工具（线性插值）
+    // =============================================
+
+    /**
+     * 降采样：从高采样率到低采样率
+     * @param {Float32Array} input - 输入 PCM 数据
+     * @param {number} fromRate - 输入采样率
+     * @param {number} toRate - 输出采样率
+     * @returns {Float32Array} 降采样后的 PCM 数据
+     */
+    function downsample(input, fromRate, toRate) {
+        if (fromRate === toRate) return input;
+        const ratio = fromRate / toRate;
+        const outputLength = Math.floor(input.length / ratio);
+        const output = new Float32Array(outputLength);
+        for (let i = 0; i < outputLength; i++) {
+            const srcIdx = i * ratio;
+            const idx0 = Math.floor(srcIdx);
+            const idx1 = Math.min(idx0 + 1, input.length - 1);
+            const frac = srcIdx - idx0;
+            output[i] = input[idx0] * (1 - frac) + input[idx1] * frac;
+        }
+        return output;
+    }
+
+    /**
+     * 升采样：从低采样率到高采样率
+     * @param {Float32Array} input - 输入 PCM 数据
+     * @param {number} fromRate - 输入采样率
+     * @param {number} toRate - 输出采样率
+     * @returns {Float32Array} 升采样后的 PCM 数据
+     */
+    function upsample(input, fromRate, toRate) {
+        if (fromRate === toRate) return input;
+        const ratio = toRate / fromRate;
+        const outputLength = Math.round(input.length * ratio);
+        const output = new Float32Array(outputLength);
+        for (let i = 0; i < outputLength; i++) {
+            const srcIdx = i / ratio;
+            const idx0 = Math.floor(srcIdx);
+            const idx1 = Math.min(idx0 + 1, input.length - 1);
+            const frac = srcIdx - idx0;
+            output[i] = input[idx0] * (1 - frac) + input[idx1] * frac;
+        }
+        return output;
+    }
+
+    // =============================================
     // 发送音频帧到服务器
     // =============================================
     function sendAudioPacket(opusData) {
@@ -248,8 +300,10 @@ const VOICE_APP = (() => {
     async function initAudio() {
         if (audioCtx) return;
 
+        // AudioContext 始终使用 48kHz（硬件原生采样率），
+        // 编解码器使用用户配置的采样率（CONFIG.sampleRate）
         audioCtx = new AudioContext({
-            sampleRate: CONFIG.sampleRate,
+            sampleRate: 48000,
             latencyHint: 'interactive'
         });
 
@@ -259,6 +313,12 @@ const VOICE_APP = (() => {
         // 创建 Worklet 节点
         workletNode = new AudioWorkletNode(audioCtx, 'voice-worklet');
 
+        // 通知 Worklet 当前帧参数（使用已更新的 CONFIG）
+        workletNode.port.postMessage({
+            type: 'config',
+            frameDuration: CONFIG.frameDuration
+        });
+
         // 监听 Worklet 消息
         workletNode.port.onmessage = async (event) => {
             const data = event.data;
@@ -267,13 +327,19 @@ const VOICE_APP = (() => {
                 // 收到麦克风 PCM → 编码 → 发送
                 if (!encoder || encoder.state !== 'configured') return;
 
+                // Worklet 以 48kHz 采集，如果编解码器采样率不同，需要降采样
+                let pcmData = data.data;
+                if (CONFIG.sampleRate !== AUDIO_CTX_SAMPLE_RATE) {
+                    pcmData = downsample(pcmData, AUDIO_CTX_SAMPLE_RATE, CONFIG.sampleRate);
+                }
+
                 const audioData = new AudioData({
                     format: 'f32-planar',
                     sampleRate: CONFIG.sampleRate,
-                    numberOfFrames: data.data.length,
+                    numberOfFrames: pcmData.length,
                     numberOfChannels: 1,
                     timestamp: performance.now() * 1000,
-                    data: data.data
+                    data: pcmData
                 });
 
                 encoder.encode(audioData);
@@ -293,7 +359,7 @@ const VOICE_APP = (() => {
         workletNode.connect(gainNode);
         gainNode.connect(audioCtx.destination);
 
-        console.log(`[Audio] Initialized: ${CONFIG.sampleRate}Hz`);
+        console.log(`[Audio] Initialized: AudioContext=48kHz, Codec=${CONFIG.sampleRate/1000}kHz, Frame=${CONFIG.frameDuration*1000}ms`);
     }
 
     // =============================================
@@ -381,9 +447,13 @@ const VOICE_APP = (() => {
             output: (audioData) => {
                 // 解码完成 → 发送 PCM 到 Worklet 播放
                 if (workletNode) {
-                    const pcmData = new Float32Array(audioData.numberOfFrames);
+                    let pcmData = new Float32Array(audioData.numberOfFrames);
                     audioData.copyTo(pcmData, { planeIndex: 0 });
-                    console.log(`[Decode] frames=${audioData.numberOfFrames}, sampleRate=${audioData.sampleRate}`);
+                    // 如果解码器采样率与 AudioContext 不同，需要升采样
+                    if (audioData.sampleRate !== AUDIO_CTX_SAMPLE_RATE) {
+                        pcmData = upsample(pcmData, audioData.sampleRate, AUDIO_CTX_SAMPLE_RATE);
+                    }
+                    console.log(`[Decode] frames=${audioData.numberOfFrames}, sampleRate=${audioData.sampleRate}, upsampledTo=${AUDIO_CTX_SAMPLE_RATE}`);
                     workletNode.port.postMessage({
                         type: 'pcm',
                         data: pcmData
@@ -414,6 +484,13 @@ const VOICE_APP = (() => {
         isInitializing = true;
 
         try {
+            // 先读取用户选择的编解码配置，更新 CONFIG
+            const userCodecConfig = getSelectedConfig();
+            CONFIG.sampleRate = userCodecConfig.sampleRate;
+            CONFIG.opusBitrate = userCodecConfig.opusBitrate;
+            CONFIG.frameDuration = userCodecConfig.frameDuration;
+            CONFIG.jitterBufferFrames = userCodecConfig.jitterBufferFrames;
+
             setStatus('🔄 初始化 WebCodecs 编解码器...', '#888');
             await initCodec();
 
@@ -428,8 +505,7 @@ const VOICE_APP = (() => {
 
             setStatus('🔄 加入1v1通话房间...', '#888');
 
-            // 读取用户选择的编解码配置，发送给服务端
-            const userCodecConfig = getSelectedConfig();
+            // 发送用户选择的编解码配置给服务端
             ws.send(JSON.stringify({
                 type: 'join',
                 roomId: CONFIG.roomId,
@@ -651,10 +727,12 @@ const VOICE_APP = (() => {
     // 编解码配置预设
     // =============================================
     const PRESETS = {
-        'low-latency': { sampleRate: 48000, bitrate: 64000, frameDuration: 0.02, jitter: 2 },
-        'balanced':    { sampleRate: 48000, bitrate: 32000, frameDuration: 0.04, jitter: 4 },
+        // 低延迟：16kHz 宽带语音 + 64kbps + 20ms 超短帧长，低延迟优先
+        'low-latency': { sampleRate: 16000, bitrate: 64000, frameDuration: 0.02, jitter: 2 },
+        'balanced':    { sampleRate: 24000, bitrate: 32000, frameDuration: 0.04, jitter: 4 },
         'high-quality':{ sampleRate: 48000, bitrate: 64000, frameDuration: 0.04, jitter: 2 },
-        'weak-network':{ sampleRate: 16000, bitrate: 16000, frameDuration: 0.06, jitter: 8 }
+        // 弱网模式：8kHz 电话质量 + 16kbps + 60ms 帧长 + 大抖动缓冲，弱网下保持可沟通
+        'weak-network':{ sampleRate: 8000, bitrate: 16000, frameDuration: 0.06, jitter: 8 }
     };
 
     function applyPreset(name) {
