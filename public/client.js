@@ -68,7 +68,7 @@ const VOICE_APP = (() => {
         const peerCount = roomPeers.size + (isJoined ? 1 : 0);
 
         if (!isJoined) {
-            roomStatusEl.innerHTML = '<span class="room-status waiting">☎️ 未加入通话...</span>';
+            roomStatusEl.innerHTML = '<span class="room-status waiting">☎️ 未加入通话。</span>';
         } else if (peerCount === 1) {
             roomStatusEl.innerHTML = '<span class="room-status waiting">⏳ 等待对方加入...</span>';
         } else if (peerCount === 2) {
