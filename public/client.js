@@ -60,6 +60,13 @@ const VOICE_APP = (() => {
     let configSectionEl, roomConfigInfoEl, roomConfigDetailsEl;
     let configSampleRateEl, configBitrateEl, configFrameDurationEl, configJitterEl;
 
+    // 讲话检测
+    const SPEAKING_THRESHOLD = 0.015;  // RMS 阈值，超过认为在说话
+    const SPEAKING_HOLD_MS = 300;      // 保持时间，避免闪烁
+    let peerSpeakingTimer = null;      // 对方讲话保持定时器
+    let peerSpeakingEl = null;         // 对方讲话指示器元素
+    let mySpeakingEl = null;           // 自己讲话指示器元素
+
     // =============================================
     // 房间状态管理
     // =============================================
@@ -449,11 +456,24 @@ const VOICE_APP = (() => {
                 if (workletNode) {
                     let pcmData = new Float32Array(audioData.numberOfFrames);
                     audioData.copyTo(pcmData, { planeIndex: 0 });
+
+                    // 计算 RMS 能量，判断对方是否在说话
+                    let sumSq = 0;
+                    for (let i = 0; i < pcmData.length; i++) {
+                        sumSq += pcmData[i] * pcmData[i];
+                    }
+                    const rms = Math.sqrt(sumSq / pcmData.length);
+                    if (rms > SPEAKING_THRESHOLD) {
+                        updatePeerSpeaking(true);
+                    } else {
+                        updatePeerSpeaking(false);
+                    }
+
                     // 如果解码器采样率与 AudioContext 不同，需要升采样
                     if (audioData.sampleRate !== AUDIO_CTX_SAMPLE_RATE) {
                         pcmData = upsample(pcmData, audioData.sampleRate, AUDIO_CTX_SAMPLE_RATE);
                     }
-                    console.log(`[Decode] frames=${audioData.numberOfFrames}, sampleRate=${audioData.sampleRate}, upsampledTo=${AUDIO_CTX_SAMPLE_RATE}`);
+                    console.log(`[Decode] frames=${audioData.numberOfFrames}, sampleRate=${audioData.sampleRate}, rms=${rms.toFixed(4)}, upsampledTo=${AUDIO_CTX_SAMPLE_RATE}`);
                     workletNode.port.postMessage({
                         type: 'pcm',
                         data: pcmData
@@ -802,6 +822,30 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
+    // 讲话检测
+    // =============================================
+    function updatePeerSpeaking(speaking) {
+        if (!peerSpeakingEl) return;
+        if (speaking) {
+            // 对方在说话 → 显示指示器
+            peerSpeakingEl.style.display = 'inline-flex';
+            // 重置保持定时器
+            if (peerSpeakingTimer) {
+                clearTimeout(peerSpeakingTimer);
+                peerSpeakingTimer = null;
+            }
+        } else {
+            // 对方不在说话 → 延迟隐藏（保持时间）
+            if (!peerSpeakingTimer) {
+                peerSpeakingTimer = setTimeout(() => {
+                    if (peerSpeakingEl) peerSpeakingEl.style.display = 'none';
+                    peerSpeakingTimer = null;
+                }, SPEAKING_HOLD_MS);
+            }
+        }
+    }
+
+    // =============================================
     // 配置面板启用/禁用
     // =============================================
     function enableConfigUI(enabled) {
@@ -828,6 +872,10 @@ const VOICE_APP = (() => {
         configBitrateEl = document.getElementById('configBitrate');
         configFrameDurationEl = document.getElementById('configFrameDuration');
         configJitterEl = document.getElementById('configJitter');
+
+        // 讲话指示器元素
+        peerSpeakingEl = document.getElementById('peerSpeakingIndicator');
+        mySpeakingEl = document.getElementById('mySpeakingIndicator');
 
         document.getElementById('joinBtn').onclick = joinRoom;
         document.getElementById('leaveBtn').onclick = leaveRoom;
