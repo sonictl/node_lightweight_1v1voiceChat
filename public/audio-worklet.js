@@ -2,6 +2,7 @@
 // PCM AudioWorklet - 双向音频处理
 // 输入: 麦克风捕获 → 主线程编码
 // 输出: 主线程解码 → 扬声器播放
+// v2.1 2026-05-03 22:24:19
 // =============================================
 
 class VoiceWorklet extends AudioWorkletProcessor {
