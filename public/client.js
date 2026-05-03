@@ -322,8 +322,16 @@ const VOICE_APP = (() => {
                 // 收到麦克风 PCM → 编码 → 发送
                 if (!encoder || encoder.state !== 'configured') return;
 
-                // Worklet 以 48kHz 采集，编解码器使用 8kHz，需要降采样
+                // 计算己方 RMS 能量，更新"讲话中"指示器
                 let pcmData = data.data;
+                let sumSq = 0;
+                for (let i = 0; i < pcmData.length; i++) {
+                    sumSq += pcmData[i] * pcmData[i];
+                }
+                const rms = Math.sqrt(sumSq / pcmData.length);
+                updateMySpeaking(rms > SPEAKING_THRESHOLD);
+
+                // Worklet 以 48kHz 采集，编解码器使用 8kHz，需要降采样
                 if (CONFIG.sampleRate !== AUDIO_CTX_SAMPLE_RATE) {
                     pcmData = downsample(pcmData, AUDIO_CTX_SAMPLE_RATE, CONFIG.sampleRate);
                 }
@@ -739,6 +747,19 @@ const VOICE_APP = (() => {
                     peerSpeakingTimer = null;
                 }, SPEAKING_HOLD_MS);
             }
+        }
+    }
+
+    /**
+     * 更新己方"讲话中"指示器
+     * 在 Worklet 的 PCM 回调中调用，基于麦克风 RMS 能量实时更新
+     */
+    function updateMySpeaking(speaking) {
+        if (!mySpeakingEl) return;
+        if (speaking) {
+            mySpeakingEl.style.display = 'inline-flex';
+        } else {
+            mySpeakingEl.style.display = 'none';
         }
     }
 
