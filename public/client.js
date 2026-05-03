@@ -303,7 +303,7 @@ const VOICE_APP = (() => {
         });
 
         // 加载 AudioWorklet
-        await audioCtx.audioWorklet.addModule('/audio-worklet.js?v=1');
+        await audioCtx.audioWorklet.addModule('/audio-worklet.js?v=2');
 
         // 创建 Worklet 节点（强制立体声输出，确保左右声道都有声音）
         workletNode = new AudioWorkletNode(audioCtx, 'voice-worklet', {
