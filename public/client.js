@@ -305,8 +305,13 @@ const VOICE_APP = (() => {
         // 加载 AudioWorklet
         await audioCtx.audioWorklet.addModule('/audio-worklet.js?v=1');
 
-        // 创建 Worklet 节点
-        workletNode = new AudioWorkletNode(audioCtx, 'voice-worklet');
+        // 创建 Worklet 节点（强制立体声输出，确保左右声道都有声音）
+        workletNode = new AudioWorkletNode(audioCtx, 'voice-worklet', {
+            outputChannelCount: [2],
+            channelCount: 2,
+            channelCountMode: 'explicit',
+            channelInterpretation: 'speakers'
+        });
 
         // 通知 Worklet 当前帧参数
         workletNode.port.postMessage({
