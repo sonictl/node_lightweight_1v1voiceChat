@@ -139,23 +139,32 @@ class VoiceWorklet extends AudioWorkletProcessor {
 
         // ---- 播放端: 向扬声器输出 ----
         if (output && output[0]) {
-            const outputChannel = output[0];
+            const outputChannelL = output[0];
+            const outputChannelR = output[1]; // 可能为 undefined（单声道输出）
 
             if (this._underrun) {
                 // 缓冲区未就绪，输出静音
-                outputChannel.fill(0);
+                outputChannelL.fill(0);
+                if (outputChannelR) outputChannelR.fill(0);
             } else {
                 const available = this._getBufferedSamples();
-                const needed = outputChannel.length;
+                const needed = outputChannelL.length;
 
                 if (available >= needed) {
                     const pcm = this._readFromRing(needed);
-                    outputChannel.set(pcm);
+                    // 左声道
+                    outputChannelL.set(pcm);
+                    // 右声道（如果有）—— 复制相同数据实现立体声
+                    if (outputChannelR) outputChannelR.set(pcm);
                 } else {
                     // 部分可用，填充静音
                     const partial = this._readFromRing(available);
-                    outputChannel.set(partial, 0);
-                    outputChannel.fill(0, available);
+                    outputChannelL.set(partial, 0);
+                    outputChannelL.fill(0, available);
+                    if (outputChannelR) {
+                        outputChannelR.set(partial, 0);
+                        outputChannelR.fill(0, available);
+                    }
                     // 通知主线程欠载
                     this.port.postMessage({ type: 'underrun', available, needed });
                 }
