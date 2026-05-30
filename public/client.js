@@ -259,6 +259,7 @@ const VOICE_APP = (() => {
                 updateRoomStatus();
                 updatePeerInfoSection();
                 updateDebugInfo();
+                updateChatUI();
                 break;
 
             case 'peer_joined':
@@ -977,9 +978,10 @@ const VOICE_APP = (() => {
 
     /**
      * 更新聊天输入框状态（加入/离开时启用/禁用）
+     * 只要加入了通话就启用聊天，不依赖对方是否在线
      */
     function updateChatUI() {
-        const enabled = isJoined && roomPeers.size > 0;
+        const enabled = isJoined;
         if (chatInputEl) chatInputEl.disabled = !enabled;
         if (chatSendBtnEl) chatSendBtnEl.disabled = !enabled;
     }
