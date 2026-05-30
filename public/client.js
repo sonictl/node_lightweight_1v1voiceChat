@@ -47,6 +47,7 @@ const VOICE_APP = (() => {
         packetsSent: 0,
         packetsRecv: 0,
         packetsLost: 0,
+        packetsDuplicated: 0,
         bytesSent: 0,
         bytesRecv: 0,
         lastSeqReceived: new Map()
@@ -641,7 +642,7 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
-    // Opus 音频包处理
+    // Opus 音频包处理（带帧序号检测）
     // =============================================
     function handleAudioPacket(data) {
         if (!decoder || decoder.state !== 'configured') return;
@@ -657,6 +658,28 @@ const VOICE_APP = (() => {
 
         stats.packetsRecv++;
         stats.bytesRecv += data.length;
+
+        // ---- 帧序号检测 ----
+        // 获取对方 peerId（1v1 场景下取第一个 peer）
+        const peerIds = Array.from(roomPeers.keys()).filter(pid => pid !== myPeerId);
+        const targetPeerId = peerIds.length > 0 ? peerIds[0] : 'unknown';
+
+        // 检测重复帧
+        const lastSeq = stats.lastSeqReceived.get(targetPeerId) ?? -1;
+        if (packetSeq <= lastSeq) {
+            stats.packetsDuplicated++;
+            console.log(`[Recv] DUPLICATE seq=${packetSeq} (last=${lastSeq}), ignored`);
+            return;
+        }
+
+        // 检测丢包
+        const gap = packetSeq - lastSeq - 1;
+        if (lastSeq >= 0 && gap > 0) {
+            stats.packetsLost += gap;
+            console.log(`[Recv] LOST ${gap} packets before seq=${packetSeq} (last=${lastSeq})`);
+        }
+
+        stats.lastSeqReceived.set(targetPeerId, packetSeq);
 
         console.log(`[Recv] seq=${packetSeq}, opusLen=${opusData.length}, ts=${timestamp}`);
 
@@ -722,12 +745,16 @@ const VOICE_APP = (() => {
             ? ((stats.bytesSent * 8) / (stats.packetsSent * CONFIG.frameDuration) / 1000).toFixed(1)
             : '0';
 
+        const lostInfo = stats.packetsLost > 0 ? ` | 📉 丢包: ${stats.packetsLost}` : '';
+        const dupInfo = stats.packetsDuplicated > 0 ? ` | 🔁 重复: ${stats.packetsDuplicated}` : '';
+
         info.innerHTML = `
             <span>🆔 ID: ${myPeerId || '—'}</span><br>
             <span>👥 房间: ${roomPeers.size + (myPeerId ? 1 : 0)} 人</span><br>
             <span>📤 发送: ${stats.packetsSent} 包 | ${bitrateSend}kbps</span><br>
-            <span>📥 接收: ${stats.packetsRecv} 包</span><br>
-            <span>📊 编码: Opus ${CONFIG.opusBitrate/1000}kbps | ${CONFIG.frameDuration * 1000}ms/帧 | ${CONFIG.sampleRate/1000}kHz</span>
+            <span>📥 接收: ${stats.packetsRecv} 包${lostInfo}${dupInfo}</span><br>
+            <span>📊 编码: Opus ${CONFIG.opusBitrate/1000}kbps | ${CONFIG.frameDuration * 1000}ms/帧 | ${CONFIG.sampleRate/1000}kHz</span><br>
+            <span>📦 抖动缓冲: 20 帧 (1200ms) | PLC 丢包隐藏</span>
         `;
     }
 
