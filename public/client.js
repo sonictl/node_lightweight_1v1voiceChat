@@ -2,6 +2,7 @@
 // WebSocket + WebCodecs 语音客户端
 // 浏览器原生编解码 · 零依赖 · 超低延迟
 // 固定弱网参数：8kHz · 16kbps · 60ms帧长 · 8帧抖动缓冲
+// 流量混淆：Base64 + 随机填充，绕过 DPI 检测
 // =============================================
 
 const VOICE_APP = (() => {
@@ -67,6 +68,102 @@ const VOICE_APP = (() => {
     let mySpeakingEl = null;           // 自己讲话指示器元素
 
     // =============================================
+    // 流量混淆工具
+    // =============================================
+
+    /**
+     * 生成随机字节的 Base64 填充字符串
+     * 用于让音频数据包看起来像普通 JSON API 响应
+     */
+    function generatePadding(minLen, maxLen) {
+        const len = Math.floor(Math.random() * (maxLen - minLen + 1)) + minLen;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+            bytes[i] = Math.floor(Math.random() * 256);
+        }
+        // 转换为 Base64 安全字符（只保留字母数字）
+        let padding = '';
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        for (let i = 0; i < len; i++) {
+            padding += chars[bytes[i] % chars.length];
+        }
+        return padding;
+    }
+
+    /**
+     * 将二进制数据编码为 Base64 字符串
+     */
+    function arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    /**
+     * 将 Base64 字符串解码为 Uint8Array
+     */
+    function base64ToArrayBuffer(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    /**
+     * 混淆音频数据包：Base64 + 随机填充 → JSON 文本消息
+     * 让流量看起来像普通 HTTPS API 请求
+     */
+    function obfuscateAudioPacket(packet) {
+        const base64Data = arrayBufferToBase64(packet);
+        // 随机选择一种"伪装类型"，让流量看起来更多样
+        const fakeTypes = ['data', 'msg', 'frame', 'chunk', 'packet', 'update', 'sync', 'event'];
+        const fakeType = fakeTypes[Math.floor(Math.random() * fakeTypes.length)];
+        const padding = generatePadding(8, 32);
+
+        return JSON.stringify({
+            [fakeType]: base64Data,
+            _t: Date.now(),
+            _p: padding,
+            _v: '2'
+        });
+    }
+
+    /**
+     * 反混淆：从 JSON 文本中提取原始二进制音频包
+     * 返回 Uint8Array 或 null
+     */
+    function deobfuscateAudioPacket(text) {
+        try {
+            const obj = JSON.parse(text);
+            // 查找第一个看起来像 Base64 的字段（长度 > 16 且只含 Base64 字符）
+            for (const key of Object.keys(obj)) {
+                const val = obj[key];
+                if (typeof val === 'string' && val.length > 16) {
+                    // 检查是否是有效的 Base64
+                    if (/^[A-Za-z0-9+/=]+$/.test(val)) {
+                        try {
+                            const bytes = base64ToArrayBuffer(val);
+                            if (bytes.length >= 8) {
+                                return bytes;
+                            }
+                        } catch (e) {
+                            // 不是有效的 Base64，继续
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // 不是 JSON，忽略
+        }
+        return null;
+    }
+
+    // =============================================
     // 房间状态管理
     // =============================================
     function updateRoomStatus() {
@@ -123,13 +220,25 @@ const VOICE_APP = (() => {
     // 消息处理
     // =============================================
     function handleMessage(event) {
+        // 所有消息现在都是文本（JSON 格式），包括音频数据
+        // 二进制消息作为兼容性保留
         if (event.data instanceof ArrayBuffer) {
             handleAudioPacket(new Uint8Array(event.data));
             return;
         }
 
+        const text = typeof event.data === 'string' ? event.data : event.data.toString();
+
+        // 先尝试作为混淆的音频包解析
+        const binaryData = deobfuscateAudioPacket(text);
+        if (binaryData) {
+            handleAudioPacket(binaryData);
+            return;
+        }
+
+        // 否则作为信令消息处理
         try {
-            const msg = JSON.parse(event.data);
+            const msg = JSON.parse(text);
             handleSignal(msg);
         } catch (e) {
             console.warn('[WS] Invalid message:', e);
@@ -229,7 +338,7 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
-    // 发送音频帧到服务器
+    // 发送音频帧到服务器（使用流量混淆）
     // =============================================
     function sendAudioPacket(opusData) {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -248,7 +357,10 @@ const VOICE_APP = (() => {
         const opusBytes = new Uint8Array(packet, headerSize, opusData.length);
         opusBytes.set(opusData);
 
-        ws.send(packet);
+        // 使用流量混淆：Base64 + 随机填充 → 文本消息
+        const obfuscatedMsg = obfuscateAudioPacket(packet);
+        ws.send(obfuscatedMsg);
+
         stats.packetsSent++;
         stats.bytesSent += packet.byteLength;
     }
@@ -434,7 +546,6 @@ const VOICE_APP = (() => {
                 // 编码完成 → 直接发送
                 const opusData = new Uint8Array(chunk.byteLength);
                 chunk.copyTo(opusData);
-                console.log(`[Send] seq=${seqCounter}, opusLen=${opusData.length}, ts=${Date.now()}`);
                 sendAudioPacket(opusData);
             },
             error: (e) => {
@@ -475,7 +586,6 @@ const VOICE_APP = (() => {
                     if (audioData.sampleRate !== AUDIO_CTX_SAMPLE_RATE) {
                         pcmData = upsample(pcmData, audioData.sampleRate, AUDIO_CTX_SAMPLE_RATE);
                     }
-                    console.log(`[Decode] frames=${audioData.numberOfFrames}, sampleRate=${audioData.sampleRate}, rms=${rms.toFixed(4)}, upsampledTo=${AUDIO_CTX_SAMPLE_RATE}`);
                     workletNode.port.postMessage({
                         type: 'pcm',
                         data: pcmData
@@ -668,7 +778,6 @@ const VOICE_APP = (() => {
         const lastSeq = stats.lastSeqReceived.get(targetPeerId) ?? -1;
         if (packetSeq <= lastSeq) {
             stats.packetsDuplicated++;
-            console.log(`[Recv] DUPLICATE seq=${packetSeq} (last=${lastSeq}), ignored`);
             return;
         }
 
@@ -676,12 +785,9 @@ const VOICE_APP = (() => {
         const gap = packetSeq - lastSeq - 1;
         if (lastSeq >= 0 && gap > 0) {
             stats.packetsLost += gap;
-            console.log(`[Recv] LOST ${gap} packets before seq=${packetSeq} (last=${lastSeq})`);
         }
 
         stats.lastSeqReceived.set(targetPeerId, packetSeq);
-
-        console.log(`[Recv] seq=${packetSeq}, opusLen=${opusData.length}, ts=${timestamp}`);
 
         // 创建 EncodedAudioChunk 解码
         // 使用相对时间戳（performance.now）避免 Date.now 绝对值过大导致解码器异常
@@ -824,6 +930,7 @@ const VOICE_APP = (() => {
 
         console.log(`[VoiceApp] Ready - Room: ${CONFIG.roomId}, WebSocket + WebCodecs`);
         console.log(`[VoiceApp] Fixed weak-network config: ${CONFIG.sampleRate/1000}kHz, ${CONFIG.opusBitrate/1000}kbps, ${CONFIG.frameDuration*1000}ms/frame`);
+        console.log('[VoiceApp] Traffic obfuscation: Base64 + random padding enabled');
         setStatus('⚡ 点击下方按钮加入语音通话', '#d4d4d4');
     }
 

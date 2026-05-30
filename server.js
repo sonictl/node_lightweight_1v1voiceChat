@@ -205,6 +205,35 @@ function cancelRoomCleanup(roomId) {
 }
 
 // =============================================
+// 流量反混淆：从 JSON 文本中提取 Base64 编码的二进制音频包
+// =============================================
+function deobfuscateAudioPacket(text) {
+    try {
+        const obj = JSON.parse(text);
+        // 查找第一个看起来像 Base64 的字段（长度 > 16 且只含 Base64 字符）
+        for (const key of Object.keys(obj)) {
+            const val = obj[key];
+            if (typeof val === 'string' && val.length > 16) {
+                // 检查是否是有效的 Base64
+                if (/^[A-Za-z0-9+/=]+$/.test(val)) {
+                    try {
+                        const binary = Buffer.from(val, 'base64');
+                        if (binary.length >= 8) {
+                            return binary;
+                        }
+                    } catch (e) {
+                        // 不是有效的 Base64，继续
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        // 不是 JSON，忽略
+    }
+    return null;
+}
+
+// =============================================
 // WebSocket 事件处理
 // =============================================
 wss.on('connection', (ws) => {
@@ -217,7 +246,16 @@ wss.on('connection', (ws) => {
             if (isBinary) {
                 handleBinaryMessage(ws, peerId, roomId, data);
             } else {
-                const msg = JSON.parse(data.toString());
+                const text = data.toString();
+
+                // 先尝试作为混淆的音频包解析（文本消息中可能包含 Base64 编码的音频数据）
+                const binaryData = deobfuscateAudioPacket(text);
+                if (binaryData) {
+                    handleBinaryMessage(ws, peerId, roomId, binaryData);
+                    return;
+                }
+
+                const msg = JSON.parse(text);
                 switch (msg.type) {
                     case 'join':
                         ({ peerId, roomId } = handleJoin(ws, msg, peerId, roomId));
