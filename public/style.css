@@ -191,22 +191,22 @@
         }
         #debugPanel {
             background: #1a1a1a;
-            padding: 12px 14px;
+            padding: 8px 14px;
             margin-top: 14px;
             border-radius: 6px;
-            font-size: 12px;
+            font-size: 11px;
             display: none;
         }
         #debugPanel h3 {
-            font-size: 11px;
+            font-size: 10px;
             color: #888;
-            margin-bottom: 6px;
+            margin-bottom: 4px;
             text-transform: uppercase;
             letter-spacing: 1px;
         }
         #debugInfo {
             font-family: monospace;
-            line-height: 1.8;
+            line-height: 1.4;
             color: #aaa;
         }
         .footer-note {
@@ -273,11 +273,11 @@
             background: #2d2d2d;
             border-radius: 4px;
             padding: 8px;
-            max-height: 180px;
+            max-height: 240px;
             overflow-y: auto;
             font-size: 13px;
             line-height: 1.6;
-            min-height: 60px;
+            min-height: 80px;
         }
         .chat-messages::-webkit-scrollbar {
             width: 4px;
