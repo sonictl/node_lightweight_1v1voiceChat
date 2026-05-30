@@ -954,13 +954,13 @@ const VOICE_APP = (() => {
         if (placeholder) placeholder.remove();
 
         const div = document.createElement('div');
-        div.className = `chat-msg ${isMe ? 'me' : 'other'}`;
+        div.className = 'chat-msg';
 
-        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         div.innerHTML = `
-            <span class="sender">${isMe ? '我' : sender}</span>
-            <span class="time">${time}</span><br>
-            ${escapeHtml(text)}
+            <span class="chat-sender ${isMe ? 'self' : ''}">${isMe ? '我' : escapeHtml(sender)}</span>
+            <span class="chat-text">${escapeHtml(text)}</span>
+            <span class="chat-time">${time}</span>
         `;
 
         chatMessagesEl.appendChild(div);
