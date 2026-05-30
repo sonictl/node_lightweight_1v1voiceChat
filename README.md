@@ -42,6 +42,10 @@ Microphone → AudioWorklet (PCM capture) → AudioEncoder (Opus) → WebSocket 
 - **Playback**: Ring buffer in AudioWorklet with underrun protection
 - **Server**: Zero-copy relay, room-based broadcasting, idle timeout cleanup
 
+### Audio Stutter Fix
+
+Voice discontinuity caused by: (1) jitter buffer underrun — fixed by 20-frame ring buffer (1200ms) + PLC (repeat last frame with decay); (2) decoder timestamp overflow — fixed by using `performance.now()` instead of `Date.now()` for `EncodedAudioChunk` timestamp.
+
 ## Configuration
 
 ### `.env` (server)

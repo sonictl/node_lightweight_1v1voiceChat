@@ -275,6 +275,10 @@ const VOICE_APP = (() => {
             case 'pong':
                 break;
 
+            case 'chat':
+                handleChatMessage(msg);
+                break;
+
             case 'error':
                 console.error('[Server]', msg.message);
                 setStatus(`⚠️ ${msg.message}`, '#ffa500');
@@ -375,6 +379,7 @@ const VOICE_APP = (() => {
         addPeerToList(peerId);
         updatePeerInfoSection();
         updateRoomStatus();
+        updateChatUI();
         console.log(`[PEER] ${peerId} joined`);
     }
 
@@ -383,6 +388,7 @@ const VOICE_APP = (() => {
         removePeerFromList(peerId);
         updatePeerInfoSection();
         updateRoomStatus();
+        updateChatUI();
         console.log(`[PEER] ${peerId} left`);
     }
 
@@ -749,6 +755,7 @@ const VOICE_APP = (() => {
         roomPeers.clear();
         updateRoomStatus();
         updatePeerInfoSection();
+        updateChatUI();
     }
 
     // =============================================
@@ -903,6 +910,81 @@ const VOICE_APP = (() => {
     }
 
     // =============================================
+    // 文字聊天
+    // =============================================
+    let chatMessagesEl = null;
+    let chatInputEl = null;
+    let chatSendBtnEl = null;
+
+    /**
+     * 发送聊天消息
+     */
+    function sendChatMessage() {
+        if (!chatInputEl || !ws || ws.readyState !== WebSocket.OPEN || !isJoined) return;
+        const text = chatInputEl.value.trim();
+        if (!text) return;
+
+        ws.send(JSON.stringify({
+            type: 'chat',
+            text: text
+        }));
+
+        // 本地显示自己的消息
+        appendChatMessage(text, myPeerId, true);
+        chatInputEl.value = '';
+        chatInputEl.focus();
+    }
+
+    /**
+     * 处理收到的聊天消息
+     */
+    function handleChatMessage(msg) {
+        appendChatMessage(msg.text, msg.sender, msg.sender === myPeerId);
+    }
+
+    /**
+     * 在聊天区域追加一条消息
+     */
+    function appendChatMessage(text, sender, isMe) {
+        if (!chatMessagesEl) return;
+
+        // 移除占位符
+        const placeholder = chatMessagesEl.querySelector('.chat-placeholder');
+        if (placeholder) placeholder.remove();
+
+        const div = document.createElement('div');
+        div.className = `chat-msg ${isMe ? 'me' : 'other'}`;
+
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        div.innerHTML = `
+            <span class="sender">${isMe ? '我' : sender}</span>
+            <span class="time">${time}</span><br>
+            ${escapeHtml(text)}
+        `;
+
+        chatMessagesEl.appendChild(div);
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    }
+
+    /**
+     * HTML 转义
+     */
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    /**
+     * 更新聊天输入框状态（加入/离开时启用/禁用）
+     */
+    function updateChatUI() {
+        const enabled = isJoined && roomPeers.size > 0;
+        if (chatInputEl) chatInputEl.disabled = !enabled;
+        if (chatSendBtnEl) chatSendBtnEl.disabled = !enabled;
+    }
+
+    // =============================================
     // 初始化
     // =============================================
     function init() {
@@ -918,8 +1000,23 @@ const VOICE_APP = (() => {
         peerSpeakingEl = document.getElementById('peerSpeakingIndicator');
         mySpeakingEl = document.getElementById('mySpeakingIndicator');
 
+        // 聊天 UI 元素
+        chatMessagesEl = document.getElementById('chatMessages');
+        chatInputEl = document.getElementById('chatInput');
+        chatSendBtnEl = document.getElementById('chatSendBtn');
+
         document.getElementById('joinBtn').onclick = joinRoom;
         document.getElementById('leaveBtn').onclick = leaveRoom;
+
+        // 聊天事件绑定
+        if (chatSendBtnEl) {
+            chatSendBtnEl.onclick = sendChatMessage;
+        }
+        if (chatInputEl) {
+            chatInputEl.onkeydown = (e) => {
+                if (e.key === 'Enter') sendChatMessage();
+            };
+        }
 
         // 显示当前房间ID
         if (roomIdDisplayEl) {

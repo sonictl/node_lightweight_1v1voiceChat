@@ -268,6 +268,9 @@ wss.on('connection', (ws) => {
                     case 'ping':
                         ws.send(JSON.stringify({ type: 'pong', t: msg.t }));
                         break;
+                    case 'chat':
+                        handleChat(ws, peerId, roomId, msg);
+                        break;
                 }
             }
         } catch (err) {
@@ -451,6 +454,26 @@ function broadcastBinaryToRoom(roomId, data, excludePeerId) {
             peer.ws.send(data);
         }
     }
+}
+
+// =============================================
+// 聊天消息中继
+// =============================================
+function handleChat(ws, peerId, roomId, msg) {
+    if (!peerId || !roomId) {
+        console.warn('[CHAT] Received from unregistered peer');
+        return;
+    }
+
+    // 广播聊天消息给房间内所有其他 peer
+    broadcastToRoom(roomId, {
+        type: 'chat',
+        text: msg.text,
+        sender: peerId,
+        timestamp: Date.now()
+    }, peerId);
+
+    console.log(`[CHAT] ${peerId} in room "${roomId}": ${msg.text.slice(0, 50)}`);
 }
 
 // =============================================

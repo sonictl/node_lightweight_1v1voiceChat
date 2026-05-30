@@ -55,8 +55,20 @@
             <div id="debugInfo">等待加入...</div>
         </div>
 
+        <!-- ===== 文字聊天 ===== -->
+        <div class="chat-section">
+            <h3>💬 文字聊天</h3>
+            <div class="chat-messages" id="chatMessages">
+                <div class="chat-placeholder">暂无消息</div>
+            </div>
+            <div class="chat-input-row">
+                <input type="text" id="chatInput" placeholder="输入消息..." maxlength="500" disabled>
+                <button id="chatSendBtn" disabled>发送</button>
+            </div>
+        </div>
+
         <div class="footer-note">
-            📡 弱网模式 · 8kHz · 16kbps · 60ms帧长 · 1200ms抖动缓冲 · PLC丢包隐藏a
+            📡 弱网模式 · 8kHz · 16kbps · 60ms帧长 · 1200ms抖动缓冲 · PLC丢包隐藏
             <br>WebSocket 直传 · Opus · AudioWorklet · WebCodecs 编解码
         </div>
     </div>
