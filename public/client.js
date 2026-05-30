@@ -684,9 +684,10 @@ const VOICE_APP = (() => {
         console.log(`[Recv] seq=${packetSeq}, opusLen=${opusData.length}, ts=${timestamp}`);
 
         // 创建 EncodedAudioChunk 解码
+        // 使用相对时间戳（performance.now）避免 Date.now 绝对值过大导致解码器异常
         const chunk = new EncodedAudioChunk({
             type: 'key',
-            timestamp: timestamp * 1000,
+            timestamp: performance.now() * 1000,
             duration: CONFIG.frameDuration * 1_000_000,
             data: opusData
         });
