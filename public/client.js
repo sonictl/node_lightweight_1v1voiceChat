@@ -958,8 +958,8 @@ const VOICE_APP = (() => {
 
         const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         div.innerHTML = `
-            <span class="chat-sender ${isMe ? 'self' : ''}">${isMe ? '我' : escapeHtml(sender)}</span>
-            <span class="chat-text">${escapeHtml(text)}</span>
+            <span class="chat-sender ${isMe ? 'self' : 'peer'}">${isMe ? '我' : escapeHtml(sender)}</span>
+            <span class="chat-text ${isMe ? '' : 'peer-text'}">${escapeHtml(text)}</span>
             <span class="chat-time">${time}</span>
         `;
 

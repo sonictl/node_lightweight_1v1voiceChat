@@ -304,11 +304,17 @@
             margin-right: 6px;
         }
         .chat-msg .chat-sender.self {
-            color: #4caf50;
+            color: #419343;
+        }
+        .chat-msg .chat-sender.peer {
+            color: #9e68fa;
         }
         .chat-msg .chat-text {
-            color: #d4d4d4;
+            color: #b7dfa1;
             font-size: 13px;
+        }
+        .chat-msg .chat-text.peer-text {
+            color: #ceabd5;
         }
         .chat-msg .chat-time {
             font-size: 10px;
